@@ -70,6 +70,28 @@ the pop-up notification holds only about 280 characters:
 The settings screens appear in the [user guide](docs/USER-GUIDE.md), beside
 the instructions for filling them in.
 
+## Install
+
+1. Download `Newsflasharr.zip` from the
+   [Releases page](https://github.com/PiratesIRC/Dispatcharr-Newsflasharr-Plugin/releases).
+   The archive contains a single folder named `newsflasharr`, which is the
+   name Dispatcharr keys the plugin on, so do not rename it.
+2. In Dispatcharr, go to **Plugins**, then **My Plugins**, and use **Import
+   Plugin** to upload the file.
+3. **Restart the Dispatcharr container.** This one is not optional. The worker
+   that collects and delivers events starts when the plugin is constructed in
+   each web worker, and a hot reload does not reliably re-run that. Without a
+   restart the plugin loads and looks healthy while nothing is delivered.
+4. Enable the plugin, then open its settings and fill in at least one channel.
+5. Click **Validate settings**. Saving the form on its own arms nothing,
+   because Dispatcharr gives plugins no hook that runs after a save.
+6. Click **Send test notification** for each channel you configured, naming
+   one channel at a time. Only a real send proves a channel works.
+
+The [user guide](docs/USER-GUIDE.md) covers each of those steps in full,
+including installing by copying the folder yourself instead of using the
+archive, and what to check when a notification does not arrive.
+
 ## Documentation
 
 | Page | For |
