@@ -1,0 +1,114 @@
+name: Package check
+
+# The published repository deliberately contains no test suite: the tests live
+# in the private development repository, along with the release tooling. So
+# this workflow does not try to be that suite. It answers one narrow question
+# that the publication process itself cannot answer, because publication builds
+# a fresh commit from an allowlist and never runs the result:
+#
+#     is what was published actually installable?
+#
+# Every check here runs against the published tree exactly as a user downloads
+# it, and needs nothing but the standard library.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: The published package is installable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Dispatcharr runs 3.12. Nothing here needs a newer feature, and
+          # pinning means a syntax error is reported against the interpreter
+          # the plugin will actually be loaded by.
+          python-version: '3.12'
+
+      - name: Nothing that should not ship is present
+        # FIRST, and reading the git index rather than the working tree. The
+        # compile step below writes __pycache__, so a filesystem walk placed
+        # after it reports the job's own build artefacts as a publication
+        # failure. That is not hypothetical: it is what the first version of
+        # this workflow did.
+        run: |
+          python - <<'PY'
+          import pathlib, subprocess, sys
+
+          tracked = subprocess.run(["git", "ls-files"], check=True,
+                                   capture_output=True, text=True).stdout.split()
+          unwanted = [p for p in tracked
+                      if pathlib.PurePath(p).name in {"CLAUDE.md", ".claude"}
+                      or "__pycache__" in pathlib.PurePath(p).parts
+                      or p.endswith(".pyc")]
+          if unwanted:
+              sys.exit("these must never be published:\n  " + "\n  ".join(sorted(unwanted)))
+          print(f"{len(tracked)} published files, none of them development files")
+          PY
+
+      - name: Every module compiles
+        run: python -m compileall -q newsflasharr
+
+      - name: The manifest is complete and agrees with the code
+        run: |
+          python - <<'PY'
+          import json, pathlib, re, sys
+
+          manifest = json.loads(
+              pathlib.Path("newsflasharr/plugin.json").read_text(encoding="utf-8"))
+          missing = [k for k in ("id", "name", "version", "description")
+                     if not manifest.get(k)]
+          if missing:
+              sys.exit(f"plugin.json is missing required keys: {missing}")
+
+          # Dispatcharr shows the card using the Plugin CLASS attributes, not
+          # the manifest, so the two can disagree with nothing failing. That
+          # has happened, and the card carried superseded wording for weeks.
+          source = pathlib.Path("newsflasharr/plugin.py").read_text(encoding="utf-8")
+          version = re.search(r'^PLUGIN_VERSION = "([^"]+)"', source, re.M)
+          if not version:
+              sys.exit("PLUGIN_VERSION not found in plugin.py")
+          if version.group(1) != manifest["version"]:
+              sys.exit(f"version mismatch: plugin.py={version.group(1)} "
+                       f"plugin.json={manifest['version']}")
+          print(f"manifest ok: {manifest['name']} {manifest['version']}")
+          PY
+
+      - name: The loader contract is satisfied
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+
+          # Dispatcharr imports the package and looks for `Plugin`. This is an
+          # AST check rather than an import, because the plugin's modules
+          # reference Django, which resolves only inside Dispatcharr.
+          init = pathlib.Path("newsflasharr/__init__.py").read_text(encoding="utf-8")
+          exported = set()
+          for node in ast.walk(ast.parse(init)):
+              if isinstance(node, ast.ImportFrom):
+                  exported |= {alias.asname or alias.name for alias in node.names}
+              elif isinstance(node, ast.Assign):
+                  for target in node.targets:
+                      if getattr(target, "id", None) == "__all__":
+                          exported |= {
+                              element.value for element in getattr(node.value, "elts", [])
+                              if isinstance(element, ast.Constant)}
+          if "Plugin" not in exported:
+              sys.exit("newsflasharr/__init__.py does not export Plugin, "
+                       "which is what the Dispatcharr loader looks for")
+
+          classes = {node.name for node in ast.walk(
+              ast.parse(pathlib.Path("newsflasharr/plugin.py").read_text(encoding="utf-8")))
+              if isinstance(node, ast.ClassDef)}
+          if "Plugin" not in classes:
+              sys.exit("newsflasharr/plugin.py defines no Plugin class")
+          print("loader contract ok")
+          PY
