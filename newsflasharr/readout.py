@@ -110,14 +110,21 @@ def write(action, body, base_dir=DEFAULT_DIR, opener=None):
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        try:
-            # 0644 for consistency with dustarr's files in the same parent.
-            # mkstemp alone yields 0600, which was measured NOT to break the
-            # Windows read (drvfs modes do not override NTFS ACLs) -- this is
-            # tidiness, not a fix.
-            os.chmod(tmp, 0o644)
-        except OSError:
-            pass
+        # The mode is deliberately left at mkstemp's 0600.
+        #
+        # It used to be widened to 0644 for cosmetic consistency with a sibling
+        # plugin's files in the same parent directory, and the comment doing so
+        # recorded that the narrower mode had been measured NOT to break
+        # reading the file from Windows, because the mount's modes do not
+        # override the filesystem's own access control. So the widening bought
+        # nothing and cost something: these files print the DERIVED PROVIDER
+        # HOSTNAME LIST, and both show_redaction.txt and validate_settings.txt
+        # say so in their own headers. 0644 handed that to every other user on
+        # the host.
+        #
+        # Found by CodeQL on the Dispatcharr Plugin Hub submission, rule
+        # py/overly-permissive-file, and confirmed by measuring the mode inside
+        # the container: it really was -rw-r--r--.
         os.replace(tmp, path)
         tmp = None
         size = os.stat(path).st_size

@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.26.2142011 (August 2, 2026)
+
+**The action output files are no longer readable by other users on the host.**
+Files such as `show_redaction.txt` and `validate_settings.txt` print the list
+of provider hostnames derived from your own electronic programme guide sources
+and accounts, and each says so in its own header. They were being written with
+mode 0644, which let any other user on the machine read them.
+
+They are now left at 0600, the mode they are created with. The wider mode had
+been set only for cosmetic consistency with another plugin's files in the same
+directory, and the note that set it recorded that the narrower mode had already
+been measured not to break reading the file from Windows. So it bought nothing.
+
+Found by CodeQL when this plugin was submitted to the Dispatcharr Plugin Hub,
+and confirmed by measuring the mode inside a running container before and after.
+
 ## 1.26.2141913 (August 2, 2026)
 
 First release.
