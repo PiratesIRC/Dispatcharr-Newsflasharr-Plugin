@@ -65,6 +65,7 @@ from . import (
     email_render,
     gates,
     readout,
+    report_count,
     report_expect,
     routing,
     spool,
@@ -73,7 +74,7 @@ from . import (
 )
 from .notify_client import notify, redact
 
-PLUGIN_VERSION = "1.26.2142011"
+PLUGIN_VERSION = "1.26.2171427"
 
 # A delivery failure older than this is history, not an outage: reported as
 # a total, never as a problem. A bare cumulative counter would otherwise go
@@ -2475,6 +2476,43 @@ class Plugin:
         enabled = channels.enabled_channels(settings)
         enabled_desc = ", ".join(enabled) if enabled else "none"
         lines.append(f"enabled channels: {len(enabled)} ({enabled_desc})")
+
+        # Informational, NEVER a problem. Report ABSENCE is already detected by
+        # report_expect and reported by Validate against the operator's own
+        # cadence; duplicating that judgement here would give two surfaces that
+        # can disagree. This line answers a different question: which callers
+        # send reports at all, and how many each says it has published.
+        #
+        # The age comes from `report_last`, which this plugin maintains itself.
+        # The count comes from the caller's own /data/<source>/report_count.json
+        # and is omitted when that file is absent, which is the normal case:
+        # one sibling plugin writes it today. Printing 0 for the others would
+        # read as "this plugin has published nothing" when the truth is "this
+        # plugin does not publish a counter".
+        published = report_count.summarize(
+            state, now, os.path.dirname(os.path.normpath(base_dir)))
+        if published:
+            parts = []
+            for entry in published:
+                part = (f"{entry['source']}/{entry['event']} "
+                        f"{entry['age_s'] / 3600.0:.1f}h ago")
+                if entry["count"] is not None:
+                    part += f" ({entry['count']} built)"
+                parts.append(part)
+            # "report sources:", NOT "reports:". The report-absence check below
+            # already owns the "reports:" prefix on five different lines, and
+            # two labels reading the same while meaning different things is
+            # worse in a readout than a longer label.
+            lines.append("report sources: " + "; ".join(parts))
+            if any(entry["count"] is not None for entry in published):
+                # Said once, here, because the number looks authoritative and
+                # is not. The writer increments without a lock across several
+                # workers and the file is not backed by a database.
+                lines.append(
+                    "  a 'built' count is reported by that plugin itself, "
+                    "counts reports written rather than emails delivered, "
+                    "can undercount, and restarts if its data directory is "
+                    "cleared.")
 
         # Counts + provenance only, never the host list itself: docs/API.md
         # warns that status dumps get pasted into GitHub issues, and dumping

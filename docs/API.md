@@ -277,7 +277,76 @@ POSTed text, and the file it points at is sent to the smtp recipient
 byte-exact with none of `redact()`/`redact_hosts()` applied. See §3a. Treat
 it like handing someone a file directly, not like writing to a log.
 
-## 8. A note on action results (not part of this API)
+## 8. Optional: publish a count of the reports you have built
+
+This is a separate, optional file. It is not part of `notify()`, it is not part
+of the spool schema, and nothing breaks if you never write it.
+
+If your plugin builds reports, you can publish how many it has built, and
+Newsflasharr's Show status action will display that number beside your plugin.
+Write one file:
+
+```
+/data/<source>/report_count.json        {"reports_built": 42}
+```
+
+`<source>` is the exact string you pass as `source` to `notify()`. One key, one
+integer. That is the whole interface.
+
+**That directory is named after your `source` string, which is often not the
+directory your plugin already uses for its own runtime files.** One caller runs
+out of `/data/stream_health/` and writes this counter to `/data/sentinelarr/`,
+because `sentinelarr` is what it passes as `source`. Check the string rather than
+reusing a path you already have.
+
+**Count reports whose file you confirmed was written to disk.** Increment once
+per successful build, whether an operator pressed a button or a scheduled job
+ran. A build that failed to write must not increment it. A report writer that
+degrades instead of raising makes a failed publish look identical to a good one,
+and a counter that increments anyway turns that failure into apparent success.
+
+Newsflasharr shows no count, and reports no error, if any of the following is
+not true. There is no feedback surface for a malformed file, so test against
+these rather than waiting to see the number appear.
+
+| Requirement | Reason |
+|---|---|
+| The value is a JSON integer | A float is refused rather than truncated, because `int(2.9)` is 2 and a silent under-report looks deliberate |
+| The value is not a JSON boolean | `bool` is a subclass of `int` in Python, so `true` would otherwise display as one report |
+| The value is zero or greater | A negative value is treated as a corrupt file |
+| The top level is a JSON object | Anything else is refused |
+| The whole file is under 4096 bytes | The read is bounded before the content is parsed, because it happens on an operator click inside a web worker |
+| It is a regular file the plugin user can read | Newsflasharr runs as the same user your plugin does |
+
+A stored `0` is displayed as zero reports built. An absent file is not an error
+and displays nothing at all, which is the correct display for a plugin that
+publishes no counter.
+
+Write it atomically, with a temporary file in the same directory followed by
+`os.replace`, so a reader never sees a partial file. Do not let a failure to
+write it fail the report itself.
+
+**No locking is expected.** An unlocked read, modify and write across several
+workers can lose an increment when two reports finish in the same instant.
+Newsflasharr treats the number as a floor rather than an audit, and says so on
+screen next to it.
+
+**Two things this number is deliberately not.** It is not a delivery count: a
+report built while notifications are switched off still increments it. It is not
+backed by a database, so clearing your plugin's data directory resets it.
+
+**Do not put the number only in the notification body.** Prose in a body is for
+a person reading the mail. It is not an interface, and it breaks the first time
+the wording changes. `notify()` takes a closed keyword set and writes a fixed
+spool schema, so there is nowhere on the event itself to put arbitrary data.
+That is why this is a file.
+
+One behaviour that reads as a fault and is not: your plugin appears in the Show
+status report list only once Newsflasharr has recorded a delivered report from
+it. A plugin that writes this file but has never delivered a report through
+Newsflasharr shows nothing, whatever the file says.
+
+## 9. A note on action results (not part of this API)
 
 This is unrelated to `notify()` and the spool schema above; it concerns
 Newsflasharr's own plugin *actions* (Validate settings, Show status, and so

@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.26.2171427 (August 5, 2026)
+
+**Show status now lists which plugins send you reports.** One `report sources:`
+line names every plugin that has delivered a report through Newsflasharr, with
+how long ago its most recent one arrived. The list comes from Newsflasharr's own
+record of what it has delivered, so a plugin appears as soon as it sends its
+first report and there is nothing to add to any setting.
+
+Where a calling plugin publishes a count of the reports it has written, that
+count is shown beside it. The file is
+`/data/<source>/report_count.json`, containing `{"reports_built": N}`, and
+`docs/API.md` section 8 documents it for plugin authors. A plugin that publishes
+no such count is still listed, just without a number, because printing zero for
+it would say it has published nothing when the truth is that it publishes no
+counter.
+
+Treat that number as a floor rather than an exact total, which is why the
+readout repeats the caveat underneath it. It counts reports written rather than
+emails delivered, so it still rises while notifications are switched off. Its
+writer does not lock the file, so two reports finishing in the same instant can
+lose one. It is not stored in a database, so it restarts if that plugin's data
+directory is cleared, and it counts only from the day that plugin started
+publishing it rather than over its whole history.
+
+**The line is informational and never turns the plugin card red.** Deciding that
+a report is overdue remains the job of the report absence check and Validate
+settings, judged against the cadence you configured. Two separate places making
+that call would be two places that can disagree.
+
 ## 1.26.2142011 (August 2, 2026)
 
 **The action output files are no longer readable by other users on the host.**

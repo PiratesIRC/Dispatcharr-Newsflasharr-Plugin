@@ -219,6 +219,39 @@ notify(source="dustarr", title="Weekly channel-usage report",
   process, and a hardlink defeats a realpath check. Do not treat it as a
   security boundary between plugins.
 
+### Show status lists which plugins send you reports
+
+Show status prints a `report sources:` line naming every plugin that has delivered a
+report through Newsflasharr, with how long ago its most recent one arrived. It
+looks like this:
+
+```
+report sources: channel-mapparr/usage_report 0.3h ago (3 built); dustarr/usage_report 2.9h ago (1 built); lineuparr/usage_report 1.0h ago (2 built); sentinelarr/weekly_report 0.7h ago (3 built)
+```
+
+**This line is informational and never turns the card red.** Deciding that a
+report is overdue is the job of `report_expect` and Validate settings, which
+judge it against the cadence you configured. This line answers a different
+question: which plugins send reports at all, and how recently.
+
+The list comes from Newsflasharr's own record of what it has delivered, so a
+plugin appears here as soon as it sends its first report and you never have to
+add it to anything.
+
+**The number in brackets is optional and comes from that plugin, not from
+Newsflasharr.** A plugin can publish a count of the reports it has written, and
+Newsflasharr displays it. A plugin that publishes no such count is still listed,
+just without a number, because printing zero for it would say it has published
+nothing when the truth is that it publishes no counter.
+
+**Treat that number as a floor rather than an exact total**, which is why the
+readout repeats the caveat underneath it. It counts reports written rather than
+emails delivered, so it still rises while notifications are switched off. Its
+writer does not lock the file, so two reports finishing in the same instant can
+lose one. It is not stored in a database, so it restarts if that plugin's data
+directory is cleared, and it counts only from the day that plugin started
+publishing it rather than over its whole history.
+
 ## Critical escalation (the no-JSON shortcut)
 
 The most common thing you will want, which is to send every critical to email
