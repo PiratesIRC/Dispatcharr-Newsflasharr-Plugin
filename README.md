@@ -18,11 +18,14 @@
 
 [![GitHub Release](https://img.shields.io/github/v/release/PiratesIRC/Dispatcharr-Newsflasharr-Plugin?include_prereleases&logo=github)](https://github.com/PiratesIRC/Dispatcharr-Newsflasharr-Plugin/releases)
 [![Downloads](https://img.shields.io/github/downloads/PiratesIRC/Dispatcharr-Newsflasharr-Plugin/total?color=success&label=Downloads&logo=github)](https://github.com/PiratesIRC/Dispatcharr-Newsflasharr-Plugin/releases)
+[![Reports built](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/PiratesIRC/bb996a94f88a37f3fb9a3645c9dcb591/raw/newsflasharr-reports.json)](docs/USER-GUIDE.md#show-status-lists-which-plugins-send-you-reports)
 
 ![Top Language](https://img.shields.io/github/languages/top/PiratesIRC/Dispatcharr-Newsflasharr-Plugin)
 ![Repo Size](https://img.shields.io/github/repo-size/PiratesIRC/Dispatcharr-Newsflasharr-Plugin)
 ![Last Commit](https://img.shields.io/github/last-commit/PiratesIRC/Dispatcharr-Newsflasharr-Plugin)
 ![License](https://img.shields.io/github/license/PiratesIRC/Dispatcharr-Newsflasharr-Plugin)
+
+<sub>The **reports built** badge is the number of reports that calling plugins have published through Newsflasharr on the maintainer's own installation, refreshed by hand rather than live. It counts reports written rather than emails delivered, it can undercount, and it restarts if a plugin's data directory is cleared, so read it as a floor and not as a total. <a href="docs/USER-GUIDE.md#show-status-lists-which-plugins-send-you-reports">What Show status reports about this</a>.</sub>
 
 Central notification service for Dispatcharr plugins. One plugin
 owns all delivery: other plugins (Sentinelarr, Dustarr, Stream-Mapparr, …)
