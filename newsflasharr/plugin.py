@@ -74,7 +74,7 @@ from . import (
 )
 from .notify_client import notify, redact
 
-PLUGIN_VERSION = "1.26.2171427"
+PLUGIN_VERSION = "1.26.2191208"
 
 # A delivery failure older than this is history, not an outage: reported as
 # a total, never as a problem. A bare cumulative counter would otherwise go
@@ -941,9 +941,16 @@ class Plugin:
             body = "\n".join(lines)
 
         base = self._readout_dir(settings)
+        # The runtime directory is the fallback because it is writable BY
+        # DEFINITION: the collector already creates and writes the spool there,
+        # so if it were unwritable the plugin would be dead for other reasons.
+        # /config is writable only where the installation bind-mounts something
+        # over it, which the stock image does not (root:root 755), so without
+        # this every published user lost the complete output of every action.
         path, reason = readout.write(
             action, self._readout_header(action, settings) + body,
-            base_dir=base)
+            base_dir=base,
+            fallback_dir=os.path.join(_base_dir(settings), "readouts"))
 
         if path:
             result["file"] = path

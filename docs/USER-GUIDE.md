@@ -757,12 +757,18 @@ one typed into the list.
 The pop-up toast is small on purpose. Dispatcharr clips it at roughly 280
 characters, from the middle, with no ellipsis, and nothing you do in the
 plugin can change that. So every action, on success or failure, writes its
-*complete* output to `/config/newsflasharr/<action>.txt` inside the
-container (reachable from the host wherever Dispatcharr's `/config` volume is
-mounted, so no `docker exec` is needed) and the card shows
-`Output: /config/newsflasharr/<action>.txt` underneath the toast. The toast
-itself still carries the short version, folded to fit; the file always has
-the whole thing.
+*complete* output to a file, and the card shows `Output: <path>` underneath
+the toast. The toast itself still carries the short version, folded to fit;
+the file always has the whole thing.
+
+**Where that file goes depends on your installation, and the card always names
+the path it actually used.** The preferred location is
+`/config/newsflasharr/<action>.txt`, because on an installation that mounts a
+host directory at `/config` you can open it without `docker exec`. In the
+stock Dispatcharr image `/config` is owned by root and the plugin cannot write
+there, so it falls back to `/data/newsflasharr/readouts/<action>.txt`, on the
+same volume the plugin already uses for its queue. You do not have to
+configure anything either way; read the path on the card.
 
 A few things worth knowing:
 

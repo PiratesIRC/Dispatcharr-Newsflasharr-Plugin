@@ -78,10 +78,25 @@ def _default_opener(base_dir):
     return fd, tmp
 
 
-def write(action, body, base_dir=DEFAULT_DIR, opener=None):
-    """Write `<action>.txt` under base_dir. NEVER raises.
+def write(action, body, base_dir=DEFAULT_DIR, opener=None, fallback_dir=None):
+    """Write `<action>.txt` under base_dir, or under fallback_dir. NEVER raises.
 
-    -> (path, None) on success, (None, reason) on failure.
+    -> (path, None) on success, (None, reason) on failure. `path` names the
+    directory actually used, so a caller surfacing it tells the operator where
+    the file went without needing a separate signal.
+
+    WHY THERE IS A FALLBACK. `/config/newsflasharr` is only writable on an
+    installation that bind-mounts a host directory over `/config`. In the stock
+    Dispatcharr image `/config` is `root:root` mode 755, so `os.makedirs` raises
+    PermissionError for the non-root user the plugin runs as, and EVERY action
+    lost its complete output: no `file` key, and the toast clips at ~280
+    characters from the middle, which left Validate unreadable. Reported by a
+    user 2026-08-07 and reproduced against the stock image. The fallback is the
+    plugin's own runtime directory, which is writable by definition because the
+    spool lives there.
+
+    The preferred directory still wins whenever it works, so an installation
+    that does mount `/config` keeps a file its operator can open from the host.
 
     Success means the artefact was VERIFIED, not merely that no exception was
     raised: the bytes are fsync'd before the replace and the resulting size is
@@ -97,8 +112,24 @@ def write(action, body, base_dir=DEFAULT_DIR, opener=None):
     if safe_action(action) is None:
         # Reject BEFORE any filesystem touch -- not even os.makedirs(base_dir)
         # runs on this path, so an attacker-shaped action cannot even probe
-        # for base_dir's existence, let alone escape it.
+        # for base_dir's existence, let alone escape it. The fallback is not
+        # tried either: the id is the problem, and a second directory cannot
+        # make it safe.
         return None, "BadAction"
+    path, reason = _write_to(action, body, base_dir, opener)
+    if path is not None or not fallback_dir or fallback_dir == base_dir:
+        # Retrying the SAME directory would pay for the failure twice and
+        # report one fault as two.
+        return path, reason
+    return _write_to(action, body, fallback_dir, opener)
+
+
+def _write_to(action, body, base_dir, opener):
+    """One attempt at one directory. -> (path, None) or (None, reason).
+
+    The caller has already validated `action`; this is not a public entry
+    point and does not re-check it.
+    """
     opener = opener or _default_opener
     tmp = None
     try:

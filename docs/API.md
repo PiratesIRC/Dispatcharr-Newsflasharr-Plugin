@@ -363,7 +363,11 @@ deliberately ABSENT, and the toast carries a prepended
 `[readout file NOT written: <reason>]` note instead. **A consumer must
 check for the key rather than assuming it, even on an otherwise-green
 result**; indexing `result["file"]` unconditionally raises `KeyError`
-exactly when the filesystem is the thing that is broken. `_headline` and
+exactly when the filesystem is the thing that is broken. **The directory is
+not fixed either**: the preferred location is `/config/newsflasharr/`, and
+where that is not writable, which is the case in a stock Dispatcharr image,
+the file goes to `/data/newsflasharr/readouts/`. Read the path from the key
+rather than building it. `_headline` and
 `_readout` are internal composition keys used to build that file; they
 are popped from the result dict before it is returned, so they are never
 present in a payload an operator, a log, or a test sees.

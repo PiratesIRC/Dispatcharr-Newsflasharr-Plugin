@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.26.2191208 (August 7, 2026)
+
+**Action output files now work on a stock Dispatcharr installation.** Every
+action writes its complete output to a file, because the pop-up toast is
+clipped at roughly 280 characters from the middle and cannot show a long
+result. That file was always written to `/config/newsflasharr/`, which only
+works if your installation mounts a host directory at `/config`. In the stock
+image `/config` is owned by root, so the plugin could not write there, and
+every action reported `[readout file NOT written: PermissionError/EACCES]`
+and produced no file at all. Validate settings was the worst affected, because
+its output is far longer than a toast can hold, so there was no way to read it.
+
+The plugin now falls back to `/data/newsflasharr/readouts/<action>.txt`, on the
+volume it already uses for its queue, and the card names whichever path it
+actually used. Nothing to configure. An installation that does mount `/config`
+keeps writing there, so a file you could already open from the host stays where
+it was.
+
+Reported by a user. Delivery was never affected by this: notifications were
+sent normally throughout, and only the output files were missing.
+
 ## 1.26.2171427 (August 5, 2026)
 
 **Show status now lists which plugins send you reports.** One `report sources:`

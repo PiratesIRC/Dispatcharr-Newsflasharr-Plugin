@@ -82,7 +82,7 @@ exception, because it is the entry point Dispatcharr itself imports.
 | `dispatcharr.py` | Reads Dispatcharr's own configuration: timezone, and the hostnames to redact. |
 | `dispatcharr_events.py` | Subscribes to Dispatcharr's system events. |
 | `report_expect.py` | Notices when a scheduled report stops arriving. |
-| `readout.py` | Writes each action's full output to a file. |
+| `readout.py` | Writes each action's full output to a file, preferring `/config/newsflasharr/` and falling back to `/data/newsflasharr/readouts/` where `/config` is not writable. |
 | `plugin.py` | The Dispatcharr entry point: settings fields and action buttons. |
 
 ## Rules that are not obvious from reading the code
