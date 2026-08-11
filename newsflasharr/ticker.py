@@ -528,6 +528,44 @@ def render_filter(settings, font=DEFAULT_FONT, ticker_path_="/data/newsflasharr/
     )
 
 
+# Quantiser per quality tier. LOWER IS BETTER PICTURE. Chosen after a live
+# complaint on 2026-08-09: the profile was re-encoding at a flat 5 Mbit/s,
+# which is roughly what the sources already arrive at, so every channel through
+# it was a second generation encode at the first generation's bitrate. ffmpeg
+# reported its own quantiser swinging to 29, which is visibly blocky, and the
+# operator could see it: the same channel played cleanly as a passthrough
+# seconds later.
+ENCODE_QUALITY = {"high": 19, "balanced": 21, "light": 25}
+DEFAULT_ENCODE_QUALITY = "balanced"
+
+# A CEILING AND A BUFFER, not a target. With neither, nvenc has nothing
+# bounding a burst and quality swings instead of degrading gracefully. These
+# are deliberately generous: the stream crosses a LAN, not the internet.
+ENCODE_MAXRATE = "16M"
+ENCODE_BUFSIZE = "32M"
+
+
+def render_encoder(settings):
+    """The video encoder arguments, quality targeted rather than bitrate capped.
+
+    `-b:v 0` is REQUIRED alongside `-cq`: with a bitrate target still set,
+    nvenc treats the quantiser as a hint and goes back to hitting the number,
+    which is the behaviour being fixed here.
+
+    Resolved with `or` rather than `.get(key, default)` on purpose. Dispatcharr
+    stores a null for a field the operator never touched, and the two argument
+    form only applies its default when the key is ABSENT, so a present null
+    would fall through as None. That exact shape has already produced a live
+    defect in this plugin.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    tier = settings.get("ticker_encode_quality") or DEFAULT_ENCODE_QUALITY
+    cq = ENCODE_QUALITY.get(tier if isinstance(tier, str) else "",
+                            ENCODE_QUALITY[DEFAULT_ENCODE_QUALITY])
+    return (f"-c:v h264_nvenc -preset p5 -rc vbr -cq {cq} -b:v 0 "
+            f"-maxrate {ENCODE_MAXRATE} -bufsize {ENCODE_BUFSIZE}")
+
+
 def render_parameters(settings, font=DEFAULT_FONT,
                       ticker_path_="/data/newsflasharr/ticker.txt", encoder=None):
     """The COMPLETE OutputProfile parameters string, ready to paste.
@@ -537,10 +575,29 @@ def render_parameters(settings, font=DEFAULT_FONT,
     that failure took the operator's live TV down once already.
     """
     settings = settings if isinstance(settings, dict) else {}
-    enc = encoder or "-c:v h264_nvenc -preset p4 -b:v 5M"
+    enc = encoder or render_encoder(settings)
     return " ".join([
-        "-fflags +discardcorrupt+genpts+nobuffer",
-        "-probesize 512K -analyzeduration 0",
+        # +nobuffer is gone: it left no packets in hand, and on 2026-08-09 this
+        # stage produced no frames at all on a channel that played perfectly as
+        # an untouched passthrough seconds later. +genpts stays, because it
+        # FILLS IN missing timestamps and never rewrites present ones.
+        #
+        # +discardcorrupt STAYS, and the argument for removing it was WRONG.
+        # It was removed on the grounds that the passthrough keeps these
+        # packets and plays fine; that conflated two paths. The passthrough
+        # COPIES without decoding, so corruption rides through harmlessly.
+        # This stage DECODES. Measured within minutes of going live without
+        # it: a channel start failed with "Error opening input: Invalid data
+        # found when processing input" and the channel went to ERROR, playing
+        # only on the retry. Corrupt data as the pipe opens can stop ffmpeg
+        # identifying the stream at all.
+        "-fflags +discardcorrupt+genpts",
+        # The probe limits are OMITTED, NOT RAISED. Measured in this workspace
+        # on Dispatcharr's input profile, same trade-off: with no limits ffmpeg
+        # stops probing the moment the streams are identified (2.0 s on a real
+        # channel), while a large explicit limit makes it keep reading up to
+        # that much (19.6 s at 10M) and buys nothing. `-analyzeduration 0` is
+        # the opposite failure: no time to establish the parameters at all.
         "-i pipe:0",
         "-map 0:v:0 -map 0:a:0",
         f"-filter:v {render_filter(settings, font, ticker_path_)}",

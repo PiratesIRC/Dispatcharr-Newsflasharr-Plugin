@@ -193,6 +193,20 @@ GROUP_EVENTS = {
 }
 
 
+# The settings-form label of every control that can contribute an event, so a
+# report can name the control the operator has to go and look at rather than
+# its internal key. Kept HERE, beside the resolver, and asserted against
+# plugin.py's field declarations by a test: a renamed label must not leave the
+# report pointing at a control that no longer exists by that name.
+CONTROL_LABELS = {
+    "events_security": "Notify on blocked M3U/EPG requests",
+    "events_login": "Notify on failed logins",
+    "events_stream_health": "Notify on channel errors/failovers",
+    "events_recordings": "Notify on recordings",
+    "dispatcharr_events": "Extra events (advanced)",
+}
+
+
 def _truthy(value):
     """Group-toggle truthiness for the RAW settings dict.
 
@@ -219,6 +233,64 @@ def selected_events(settings):
         if _truthy(settings.get(field)):
             enabled.update(events)
     return enabled, unknown
+
+
+def provenance(settings):
+    """Which CONTROL contributed which events -> [(setting key, [events])].
+
+    The counterpart to selected_events(), which returns only the union. The
+    union alone cannot answer the question that matters when a subscription
+    looks wrong: an operator reading "4 subscribed" cannot tell whether those
+    four came from the control they set.
+
+    That is not hypothetical. The free text field was once wiped to '' at the
+    same moment a group toggle was switched on; the resolved count stayed
+    plausible and the report stayed calm, so the loss was invisible.
+
+    Group toggles appear only when switched on, because they are checkboxes
+    the operator can already see at a glance in the settings form and four
+    zeroes would be noise. The free text field is ALWAYS present, at zero if
+    need be: it is the only control whose contents can vanish without leaving
+    a visible trace, so its emptiness is the signal, not an omission.
+
+    An event named by both a toggle and the free text field is attributed to
+    both. These are contributions, not a partition, so they do not sum to the
+    resolved total.
+
+    Total over hostile input like every other function here: a non-dict
+    settings, a missing key, a present-but-None value and a list-valued free
+    text field all return a result rather than raising.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    out = []
+    for field, events in GROUP_EVENTS.items():
+        if _truthy(settings.get(field)):
+            out.append((field, sorted(events)))
+    # Unknown names are excluded rather than reported here: lint_settings
+    # already raises them as errors, and counting a typo as a contribution
+    # would say the field is populated when nothing it names resolves.
+    known, _unknown = parse_selection(settings.get("dispatcharr_events"))
+    out.append(("dispatcharr_events", sorted(known)))
+    return out
+
+
+def render_provenance(settings):
+    """provenance() as one operator-readable line, or None when nothing is
+    subscribed at all.
+
+    None rather than an empty line because _events_report reports the verdict
+    `skipped` in that case: an operator who does not use this feature must
+    never see a word about it.
+    """
+    entries = provenance(settings)
+    if not any(events for _field, events in entries):
+        return None
+    clauses = []
+    for field, events in entries:
+        label = CONTROL_LABELS.get(field, field)
+        names = f" ({', '.join(events)})" if events else ""
+        clauses.append(f"'{label}' -> {len(events)}{names}")
+    return "; ".join(clauses)
 
 
 def lint(raw, max_sends_per_hour=20):

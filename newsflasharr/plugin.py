@@ -74,7 +74,7 @@ from . import (
 )
 from .notify_client import notify, redact
 
-PLUGIN_VERSION = "1.26.2191208"
+PLUGIN_VERSION = "1.26.2231926"
 
 # A delivery failure older than this is history, not an outage: reported as
 # a total, never as a problem. A bare cumulative counter would otherwise go
@@ -281,6 +281,17 @@ FIELDS = [
      "default": 0.6, "min": 0, "max": 1, "step": 0.1,
      "description": "0 = invisible box (text alone, harder to read over bright "
                     "video), 1 = solid. 0.6 is a good default."},
+    {"id": "ticker_encode_quality", "label": "Banner picture quality",
+     "type": "select", "default": ticker.DEFAULT_ENCODE_QUALITY,
+     "options": [
+         {"value": "high", "label": "Higher quality (more GPU and bandwidth)"},
+         {"value": "balanced", "label": "Balanced (recommended)"},
+         {"value": "light", "label": "Lighter load (softer picture)"},
+     ],
+     "description": "Drawing the banner re-encodes the video, which costs a "
+                    "little quality. This sets how much. Only devices showing "
+                    "the banner are affected. If a channel looks blocky only "
+                    "there, raise this."},
     {"id": "_section_noise", "type": "info", "label": "🔕 Noise control",
      "description": "Stops a storm from burying you. Each limit has its own "
                     "setting for which severities are allowed to ignore it."},
@@ -1699,6 +1710,16 @@ class Plugin:
                         dispatcharr_events.lint_settings(settings, cap)]
             details = [f"Dispatcharr events: {len(enabled)} subscribed"
                        + (f" ({', '.join(sorted(enabled))})." if enabled else ".")]
+            # WHICH CONTROL contributed what, not just the resolved union.
+            # The union alone cannot distinguish "you chose these four" from
+            # "your free text field was wiped and a toggle happens to supply
+            # four" -- the second is what actually happened here, and the
+            # report called it calm. render_provenance returns None only when
+            # nothing at all is subscribed, which the skip above already
+            # handled, so this line is present whenever the check reports.
+            line = dispatcharr_events.render_provenance(settings)
+            if line:
+                details.append(f"Dispatcharr events: {line}")
             # Stream-monitor-presence hint (spec s2): a HINT in details, never
             # an error -- another plugin's presence must not fail validation.
             # Lazy ORM, guarded: absent Django (tests) skips silently.

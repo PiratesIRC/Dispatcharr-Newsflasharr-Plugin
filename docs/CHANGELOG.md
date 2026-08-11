@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.26.2231926 (August 11, 2026)
+
+**Validate settings now names which setting turned each Dispatcharr event on.**
+Newsflasharr can notify you about Dispatcharr's own system events, and you
+choose them with four checkboxes plus an "Extra events (advanced)" box for
+anything the checkboxes do not cover. Validate settings used to report only the
+combined result, for example "4 subscribed". That is enough to tell you how many
+events are active and nothing about where they came from, so if the contents of
+the advanced box were lost you would not notice: the total still looked
+reasonable because a checkbox was supplying events of its own.
+
+Validate settings now prints a second line naming each control and what it
+contributed, like this:
+
+    'Notify on channel errors/failovers' -> 2 (channel_error, channel_failover); 'Extra events (advanced)' -> 0
+
+A checkbox appears only when it is switched on, because you can already see the
+checkboxes in the settings form. The advanced box is always shown, including
+when it is empty, because it is the one control whose contents can disappear
+without leaving anything to see. A zero next to it means it is empty.
+
+Nothing to configure, and nothing changes about which events you receive. If you
+do not use Dispatcharr system events at all, validate settings stays silent about
+them exactly as before.
+
 ## 1.26.2191208 (August 7, 2026)
 
 **Action output files now work on a stock Dispatcharr installation.** Every
