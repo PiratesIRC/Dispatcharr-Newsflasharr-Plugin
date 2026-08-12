@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.26.2241159 (August 12, 2026)
+
+**Documentation corrections for the on-screen ticker.** No code changed in this
+release. The user guide printed a reference copy of the Output Profile
+parameters that was two releases out of date: it still showed the fixed 5 Mbit/s
+encoder and the stream examination limits that were both removed in
+1.26.2221153, so anyone pasting it reproduced the picture problems that release
+fixed. It also stopped short of the final line, without which the profile fails
+at stream start. The block now matches what the Ticker filter button prints, and
+a test keeps the two in step.
+
+The guide also now documents the **Banner picture quality** setting, which was
+added in 1.26.2221153 and explained nowhere, and records that an Output Profile
+you pasted earlier keeps the banner position it was pasted with. If your banner
+draws somewhere you did not choose, that is the first thing to check.
+
 ## 1.26.2231926 (August 11, 2026)
 
 **Validate settings now names which setting turned each Dispatcharr event on.**
@@ -24,6 +40,33 @@ without leaving anything to see. A zero next to it means it is empty.
 Nothing to configure, and nothing changes about which events you receive. If you
 do not use Dispatcharr system events at all, validate settings stays silent about
 them exactly as before.
+
+## 1.26.2221153 (August 10, 2026)
+
+**The on-screen ticker was degrading the picture it draws on. This fixes it, and
+adds a setting to control the trade.** If you use the banner overlay, every
+channel that passed through it was re-encoded at a fixed 5 Mbit/s with no quality
+target. Sources commonly arrive at about that rate already, so the overlay was
+producing a second-generation encode at the first generation's bitrate. The
+result was visible: blocky picture, stuttering, and in the worst cases a channel
+that played correctly with the overlay switched off and badly with it on.
+
+The encoder now aims at a picture quality target with a ceiling, rather than at
+a fixed bitrate. A new setting, **Banner picture quality**, chooses the trade
+between picture and bandwidth. See the user guide for what the three levels mean
+and how to pick one.
+
+A second, separate fault was fixed at the same time. The overlay told ffmpeg not
+to spend any time examining the incoming stream before decoding it. A decoder
+given no time to work out what it is receiving has nothing to decode against,
+and it logged decode errors on streams that were arriving perfectly normally.
+Those limits are now simply absent, which measured faster to first picture than
+either the old setting or a larger one.
+
+**If you already have an output profile for the banner, re-paste it.** Click the
+plugin's Ticker filter button, copy what it prints, and paste it over your
+profile's parameters, then restart the stream. Nothing updates a profile you
+created earlier on its own.
 
 ## 1.26.2191208 (August 7, 2026)
 

@@ -519,18 +519,26 @@ will need that id in step 2, where it goes into the playlist URL.
 > stream. "Re-paste the filter" in the settings page means: click **Ticker
 > filter**, copy, paste here, restart the stream.
 
-Reference (the font path and bitrate are yours to choose):
+Reference, at the default settings, and the font path is yours to choose. The
+button prints this as ONE line; it is wrapped here only so it can be read:
 
 ```
--fflags +discardcorrupt+genpts+nobuffer -probesize 512K -analyzeduration 0
+-fflags +discardcorrupt+genpts
 -i pipe:0
 -map 0:v:0 -map 0:a:0
 -filter:v drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=/data/newsflasharr/ticker.txt:reload=30:expansion=none:fontsize=h/30:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12:x=if(gt(text_w\\,w)\\,w-mod(t*150\\,w+text_w)\\,(w-text_w)/2):y=12+(h-text_h-24)*0.9
--c:v h264_nvenc -preset p4 -b:v 5M
--c:a aac -b:a 192k
+-c:v h264_nvenc -preset p5 -rc vbr -cq 21 -b:v 0 -maxrate 16M -bufsize 32M
+-c:a aac -b:a 192k -ac 2
+-max_muxing_queue_size 4096 -flush_packets 1
+-mpegts_flags +pat_pmt_at_frames+resend_headers+initial_discontinuity
+-f mpegts pipe:1
 ```
 
-Four parts of that are load-bearing:
+**Paste the whole thing, including the last line.** An earlier version of this
+guide stopped at the audio line. Without `-f mpegts pipe:1` the profile fails at
+stream start with an HTTP 500 and no useful message.
+
+Six parts of that are load-bearing:
 
 - **The doubled backslashes before each comma are not a typo: type them
   exactly.** Dispatcharr builds the command as `[command] + shlex_split(parameters)`,
@@ -552,12 +560,26 @@ Four parts of that are load-bearing:
 - **The `y` expression places the banner from your Banner vertical position
   setting.** The default `8` sits just above the band where subtitles live; `9`
   and `10` sit on it. `0` is dead centre, `-10` the top of the picture.
+  **A profile you pasted earlier keeps the position it was pasted with.**
+  If the banner draws somewhere you did not choose, compare the `y` factor in
+  your profile against the setting before assuming anything is broken: `-10`
+  renders `*0`, `0` renders `*0.5`, `8` renders `*0.9`, `10` renders `*1`.
+- **`-cq 21` is the picture quality target and `-b:v 0` is required next to
+  it.** With a bitrate target still set, the encoder treats the quality number
+  as a hint and goes back to hitting the bitrate, which is the behaviour the
+  Banner picture quality setting exists to avoid. `-maxrate` and `-bufsize` are
+  a ceiling, not a target.
+- **There is no `-probesize` or `-analyzeduration`, and that is deliberate.**
+  Restricting them starves the decoder of the time it needs to work out what it
+  is receiving, which produces decode errors on a perfectly healthy stream.
+  Leaving them out measured faster to first picture than either a small or a
+  large value.
 
-**You do not have to write this by hand.** Set the size, position, colours and
-opacity under **🎨 Banner appearance** in the settings, then click **Ticker
-filter**: it prints the complete parameters string to paste here.
+**You do not have to write this by hand.** Set the size, position, colours,
+opacity and picture quality under **🎨 Banner appearance** in the settings, then
+click **Ticker filter**: it prints the complete parameters string to paste here.
 
-Those four settings sit under their own sub-header for a reason: they are the
+Those five settings sit under their own sub-header for a reason: they are the
 only ones that change *nothing* until you re-paste and restart the stream.
 Everything above that header (enable, minimum severity, banner duration,
 prefix, allowed sources) takes effect on the next banner with no re-paste.
@@ -573,6 +595,32 @@ reason rather than emitted, because a colour `drawtext` cannot parse makes the
 filter fail to initialise, and that hangs the channel with no error (see below).
 Values containing `:` or `,` are rejected outright: they would inject further
 options, or an entire extra filter, into your filterchain.
+
+### Banner picture quality
+
+Drawing a banner means re-encoding the video, so the overlay decides how good
+the picture is on every channel a banner-carrying device watches, whether or not
+a banner is showing at the time. **Banner picture quality** sets that trade.
+
+| Setting | What it does | Pick it when |
+| --- | --- | --- |
+| Higher quality | Closest to the source picture. Uses the most GPU time and the most bandwidth. | You have GPU headroom, few concurrent viewers, and a wired network. |
+| **Balanced** (default) | The recommended middle. | You have no reason to choose otherwise. |
+| Lighter load | Softer picture, noticeably less bandwidth and GPU time. | Streams pause or stutter through the overlay while the same channel plays cleanly without it, or you run several overlay viewers at once. |
+
+Two things are worth knowing before you change it.
+
+**The overlay always costs more than no overlay.** It is a real re-encode. A
+device with no output profile attached receives the provider's bytes copied
+through untouched, at a small fraction of the processing cost. Only opt in the
+devices that need the banner.
+
+**Symptoms that look like a bad provider are often this setting.** If a channel
+stutters, pauses or looks blocky on the device carrying the banner while the
+same channel is fine everywhere else, suspect the overlay first. Every device
+without the profile is already a control group, so the comparison is free. Try
+the lighter setting before concluding the stream itself is at fault. Remember to
+re-paste the filter and restart the stream, or nothing changes.
 
 **Sizes are resolution-relative, not pixel counts.** `fontsize=h/30` means the
 banner occupies the same *proportion* of the picture whether the stream is 720p,
