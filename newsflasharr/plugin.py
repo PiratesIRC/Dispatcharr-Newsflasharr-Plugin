@@ -74,7 +74,7 @@ from . import (
 )
 from .notify_client import notify, redact
 
-PLUGIN_VERSION = "1.26.2241159"
+PLUGIN_VERSION = "1.26.2481646"
 
 # A delivery failure older than this is history, not an outage: reported as
 # a total, never as a problem. A bare cumulative counter would otherwise go
@@ -107,9 +107,9 @@ FIELDS = [
                     "old tab silently reverts your settings when it saves. Then "
                     "fill in ONE channel below; ntfy needs both server "
                     "and topic; email needs server, From and Recipients. Type that "
-                    "channel's name (discord, webhook, ntfy, apprise, smtp) into "
-                    "Default channels. Then click Validate, then Test; only Test "
-                    "proves a channel works."},
+                    "channel's name (discord, webhook, ntfy, apprise, smtp, "
+                    "connect, ticker) into Default channels. Then click Validate, then "
+                    "Test; only Test proves a channel works."},
     {"id": "_section_channels", "type": "info", "label": "📢 Channels",
      "description": "Where notifications are sent. Leave a channel blank to "
                     "disable it. If none is enabled, nothing can be delivered; alerts wait "
@@ -134,6 +134,13 @@ FIELDS = [
     {"id": "apprise_url", "label": "Apprise URL", "type": "string", "default": "",
      "input_type": "password",
      "description": "URL of an Apprise API endpoint. Leave blank to disable."},
+    {"id": "connect_integration", "label": "Dispatcharr Connect Integration",
+     "type": "string", "default": "",
+     "placeholder": "Name of a webhook Integration",
+     "description": "Send notifications through a webhook Integration you set "
+                    "up on Dispatcharr's Connect page, reusing its URL and "
+                    "headers. Type its name exactly as shown there. Blank "
+                    "disables this channel."},
 
     {"id": "_section_email", "type": "info", "label": "📧 Email (SMTP)",
      "description": "Email straight from Newsflasharr. Only counts as enabled when "
@@ -176,16 +183,16 @@ FIELDS = [
                     "channels to the default ones (so adding a rule never "
                     "silently un-routes them) UNLESS it sets "
                     "'exclusive': true, which sends ONLY to that rule's "
-                    "channels. Matched rules UNION with "
-                    "the default channels, so adding a rule never silently "
-                    "un-routes them."},
+                    "channels. A severity that matches no rule at all "
+                    "still goes to the default channels."},
     {"id": "default_channels", "label": "Default channels", "type": "string",
      "default": "", "placeholder": "ntfy, smtp",
      "description": "Where alerts go unless a rule below says otherwise. BLANK "
                     "MEANS NOTHING IS DELIVERED; type at least one name: "
                     "discord, webhook, ntfy, "
-                    "apprise, smtp, ticker. Adding 'ticker' will not put every "
-                    "alert on your TV; it still obeys the Ticker settings below."},
+                    "apprise, smtp, connect, ticker. Adding 'ticker' will not put "
+                    "every alert on your TV; it still obeys the Ticker settings "
+                    "below."},
     {"id": "routing_rules", "label": "Routing rules", "type": "text", "default": "[]",
      "description": "JSON list, e.g. [{\"match\": {\"severity\": \"critical\"}, "
                     "\"channels\": [\"smtp\"]}]. Match on source, event or severity. "
@@ -250,7 +257,11 @@ FIELDS = [
 
     {"id": "_section_ticker_look", "type": "info",
      "label": "🎨 Banner appearance",
-     "description": "These four settings only change what the FILTER STRING says. Nothing on screen changes until you click 'Ticker filter', paste the result into your Output Profile, and restart the stream. (The settings above take effect on the next banner.)"},
+     # The count is checked against this section's membership by
+     # test_a_heading_that_states_how_many_settings_it_governs_is_right.
+     # It read "four" over five settings from the day
+     # ticker_encode_quality was added until 2026-09-05.
+     "description": "These five settings only change what the FILTER STRING says. Nothing on screen changes until you click 'Ticker filter', paste the result into your Output Profile, and restart the stream. (The settings above take effect on the next banner.)"},
     {"id": "ticker_font_size", "label": "Banner text size", "type": "select",
      "default": "medium",
      "options": [
@@ -352,7 +363,8 @@ FIELDS = [
     {"id": "events_security", "label": "Notify on blocked M3U/EPG requests",
      "type": "boolean", "default": False,
      "description": "A client request to your playlist/guide endpoints was "
-                    "denied by network-access rules. Rare and actionable."},
+                    "denied by network-access rules. Rare, and something you "
+                    "can fix."},
     {"id": "events_login", "label": "Notify on failed logins",
      "type": "boolean", "default": False,
      "description": "WARNING: failed logins can be triggered by an "
@@ -375,15 +387,19 @@ FIELDS = [
                     "chatty events, and overlap with Sentinelarr."},
 
     {"id": "_section_advanced", "type": "info", "label": "⚙️ Advanced",
-     "description": "Sane defaults. Leave these alone unless you have a reason."},
+     "description": "Timing and monitoring. The defaults suit almost every "
+                    "installation. Queue check interval is the delay "
+                    "before a new alert is picked up, so check it when "
+                    "notifications feel late rather than missing."},
     {"id": "spool_poll_s", "label": "Queue check interval (s)", "type": "number",
      "default": 5, "min": 1,
      "description": "How often Newsflasharr checks for new alerts. Lower is faster "
                     "but busier. The default is fine."},
     {"id": "max_event_age_h", "label": "Max event age (hours)", "type": "number",
      "default": 24, "min": 1,
-     "description": "An undelivered event older than this is dropped as expired "
-                    "-- CRITICALS INCLUDED, with nothing retried afterwards."},
+     "description": "An undelivered event older than this is dropped as "
+                    "expired. That INCLUDES CRITICALS, and nothing is "
+                    "retried afterwards."},
     {"id": "report_expect_days", "label": "Expect a report every N days",
      "type": "number", "default": "", "min": 1,
      "placeholder": "blank = do not monitor",
@@ -402,13 +418,21 @@ FIELDS = [
 ]
 
 ACTIONS = [
-    # Colour carries meaning: green = inspect-only, cyan = sends a test,
-    # blue = prints something to read, orange = moves real traffic. Outline for
-    # anything read-only, filled for anything that leaves the box.
+    # Colour names ONE consequence each, checked by tests/test_action_buttons.py:
+    #   blue    reads and reports, changing nothing
+    #   cyan    sends something outward, off this box or onto a screen
+    #   orange  moves real traffic, but removes nothing
+    #   red     removes something -- UNUSED here, and reserved
+    # Outline for anything read-only, filled for anything that leaves the box.
+    #
+    # This used to run green for "inspect-only" alongside blue for "prints
+    # something to read". Both describe an action that changes nothing, so two
+    # colours carried one consequence and validate_settings was the only green
+    # button on the page for a reason no operator could act on.
     {"id": "validate_settings", "label": "Validate settings",
      "description": "Check routing rules and list enabled channels.",
      "button_label": "✅ Validate", "button_variant": "outline",
-     "button_color": "green"},
+     "button_color": "blue"},
     {"id": "test_notification", "label": "Send test notification",
      "description": "Leave the channel blank and this sends a REAL notification "
                     "through every enabled channel right now; it can page "
@@ -438,8 +462,9 @@ ACTIONS = [
      "button_color": "cyan"},
     {"id": "show_ticker_filter", "label": "Ticker filter (copy into Output Profile)",
      "description": "Print the ffmpeg parameters built from the appearance "
-                    "settings above. Newsflasharr never edits your Output Profile "
-                    "-- paste this into it yourself, then restart the stream.",
+                    "settings above. Newsflasharr never edits your Output "
+                    "Profile. Paste this into it yourself, then restart "
+                    "the stream.",
      "button_label": "🎬 Ticker filter", "button_variant": "outline",
      "button_color": "blue"},
     {"id": "show_redaction", "label": "Show redaction list",
@@ -530,6 +555,39 @@ def _base_dir(settings):
     return override if override else DEFAULT_BASE_DIR
 
 
+def human_duration(seconds):
+    """A seconds count written the way a person reads one. Never raises.
+
+    A readout line reading "heartbeat: STALE (1001740s old)" has told its
+    reader nothing they can act on. The only question during an outage is
+    whether it started minutes or weeks ago, and the two largest units that
+    fit answer it: the same value reads "11d 14h".
+
+    Returns "unknown" for anything that is not a finite number rather than
+    raising. Every caller here takes its input from state.json, which another
+    process writes and which can hold whatever that process last put there.
+
+    A negative age reads as "0s". Two workers on one box do not share a clock
+    reading, so an age computed as now minus a stamp written elsewhere can
+    come out slightly below zero without anything being wrong.
+    """
+    try:
+        # int(float(x)) already rejects every non-number shape:
+        # TypeError for None, ValueError for a word and for NaN,
+        # OverflowError for either infinity. An explicit NaN and
+        # infinity test above this was measured to be redundant.
+        total = max(0, int(float(seconds)))
+    except (TypeError, ValueError, OverflowError):
+        return "unknown"
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m {total % 60}s"
+    if total < 86400:
+        return f"{total // 3600}h {(total % 3600) // 60}m"
+    return f"{total // 86400}d {(total % 86400) // 3600}h"
+
+
 def _mask_record(record, hosts=None):
     """Best-effort mask of any URL-ish string value in a ledger record before
     it leaves the process via show_status. Ledger records are already
@@ -596,9 +654,9 @@ class Plugin:
     # compared them. scripts/check_version_sync.py now does.
     description = ("Central notification service: other plugins drop events, "
                    "Newsflasharr routes them to Discord, a webhook, ntfy, "
-                   "Apprise, email, or an on-screen banner over live TV, with "
-                   "deduplication, storm throttling, quiet hours and "
-                   "per-channel retry.")
+                   "Apprise, email, a Dispatcharr Connect Integration, or an "
+                   "on-screen banner over live TV, with deduplication, storm "
+                   "throttling, quiet hours and per-channel retry.")
     fields = FIELDS
     actions = ACTIONS
 
@@ -826,8 +884,8 @@ class Plugin:
 
     # Fixed iteration order for every check-map/details/problems assembly
     # below -- also the order the "no early return" contract runs them in.
-    _VALIDATE_CHECKS = ("routing", "timezone", "noise", "smtp", "events", "ticker",
-                        "redaction", "liveness")
+    _VALIDATE_CHECKS = ("routing", "timezone", "noise", "smtp", "connect", "events",
+                        "ticker", "redaction", "liveness")
 
     MESSAGE_CAP = 120
     # MEASURED, not assumed. Dispatcharr mounts Mantine's Notifications with
@@ -852,8 +910,21 @@ class Plugin:
     def _readout_dir(self, settings):
         return settings.get("_readout_dir_override") or self.READOUT_DIR
 
-    def _readout_header(self, action, settings):
-        """Version, local time, the WINDOWS path, and the sensitivity line.
+    @classmethod
+    def _action_label(cls, action):
+        """The text on the button, for an action id. Falls back to the id.
+
+        A readout header naming `show_ticker_filter` names a token that
+        appears nowhere in the interface. The button reads "Ticker filter
+        (copy into Output Profile)", and that is what a reader can look for.
+        """
+        for declared in cls.actions:
+            if declared.get("id") == action:
+                return declared.get("label") or action
+        return action
+
+    def _readout_header(self, action, settings, path, fell_back):
+        """Version, local time, the file's OWN path, and the sensitivity line.
 
         The timezone comes from the ALREADY-RESOLVED settings key, not from a
         fresh dispatcharr.read_timezone() call: that would duplicate the
@@ -869,6 +940,21 @@ class Plugin:
         even there whenever `_readout_dir_override` was in play (a test or
         development base directory), because the file would sit somewhere else
         entirely while the header still named the drive.
+
+        `path` and `fell_back` both come from `readout.write`, once it has
+        chosen a directory and created it. The line used to be HARDCODED to
+        `/config/newsflasharr/<action>.txt`, which is only where the file goes
+        on an installation that bind-mounts a host directory over `/config`;
+        the stock Dispatcharr image has it root-owned and mode 755, so the
+        write falls back to the plugin's own runtime directory, and every
+        readout on every such installation named a file that does not exist.
+
+        `fell_back` IS PASSED, NOT DERIVED. The first repair took only `path`
+        and worked the rest out by testing it against `readout.DEFAULT_DIR`,
+        which is wrong for any preferred directory that is not literally that
+        constant: a write that SUCCEEDED then told its reader it had failed.
+        Deriving a fact the writer already holds is the defect this parameter
+        exists to remove, so do not reintroduce a prefix test here.
         """
         tz_name = settings.get("_resolved_quiet_tz") or "UTC"
         try:
@@ -877,12 +963,18 @@ class Plugin:
         except Exception:
             tz_name = "UTC (could not resolve Dispatcharr's time zone)"
             now = datetime.datetime.now(datetime.UTC)
+        shown = str(path).replace(chr(92), "/")
+        if fell_back:
+            where = ("Newsflasharr could not write to "
+                     f"{readout.DEFAULT_DIR}, so this went to its own data "
+                     "directory instead")
+        else:
+            where = ("reachable from the host wherever you mounted "
+                     "Dispatcharr's /config volume")
         return "\n".join([
-            f"Newsflasharr {PLUGIN_VERSION}: {action}",
+            f"Newsflasharr {PLUGIN_VERSION}: {self._action_label(action)}",
             f"Written {now.strftime('%Y-%m-%d %H:%M:%S')} {tz_name}",
-            f"Inside the container: /config/newsflasharr/{action}.txt "
-            "(reachable from the host wherever you mounted Dispatcharr's "
-            "/config volume).",
+            f"Inside the container: {shown} ({where}).",
             "This file may name your provider hostnames. Do not paste it into "
             "a public issue without reading it first.",
             "-" * 60,
@@ -958,10 +1050,15 @@ class Plugin:
         # /config is writable only where the installation bind-mounts something
         # over it, which the stock image does not (root:root 755), so without
         # this every published user lost the complete output of every action.
+        # The header is built by readout.write, once it knows which of the two
+        # directories the file actually landed in, so the "Inside the
+        # container:" line names that file rather than the preferred one.
         path, reason = readout.write(
-            action, self._readout_header(action, settings) + body,
+            action, body,
             base_dir=base,
-            fallback_dir=os.path.join(_base_dir(settings), "readouts"))
+            fallback_dir=os.path.join(_base_dir(settings), "readouts"),
+            header=lambda resolved, fell_back: self._readout_header(
+                action, settings, resolved, fell_back))
 
         if path:
             result["file"] = path
@@ -1160,11 +1257,22 @@ class Plugin:
         degradation-warnings-lead-inventory ordering that duplication was
         introduced to get.
         """
+        # RESOLVED FIRST, before the dict below is built, and it writes its
+        # fresh answer back into `settings`. `_routing_report` reads the
+        # resolved connect keys through `channels.unusable_channels`, and a
+        # dict literal evaluates in source order, so with the call left in
+        # place below the routing line reported the CACHED answer that the
+        # Connect check had just replaced: the operator switched the
+        # Integration on, clicked Validate, and was told in red that it was
+        # still off for as long as the 300s cache held. The key order here is
+        # the display order and is unchanged.
+        connect = self._connect_report(settings)
         reports = {
             "routing": self._routing_report(settings),
             "timezone": self._timezone_report(settings),
             "noise": self._noise_report(settings),
             "smtp": self._smtp_report(settings),
+            "connect": connect,
             "events": self._events_report(settings),
             "ticker": self._ticker_report(settings),
             "redaction": self._redaction_report(settings),
@@ -1287,7 +1395,18 @@ class Plugin:
             # forever, with no surface anywhere. Uses channels.safe_url, the
             # same predicate the builders use, so this cannot drift from
             # delivery.
+            # `connect` is SKIPPED here whenever an Integration is named,
+            # because `_connect_report` in the same Validate run reports the
+            # identical condition and names the Integration while doing it.
+            # Both firing put one fault in the readout twice, under two
+            # wordings. `channels.unusable_channels` itself is left alone: it
+            # is shared with Show routing, which has no Connect check of its
+            # own and does need to say so there.
+            connect_owned = bool(str(settings.get("connect_integration")
+                                     or "").strip())
             for name, reason in channels.unusable_channels(settings):
+                if name == "connect" and connect_owned:
+                    continue
                 problems.append(f"Channel {name}: {reason}")
 
             # A value that failed to parse was DISCARDED, so `lint` sees []
@@ -1522,11 +1641,13 @@ class Plugin:
                 age = now - last_tick
                 if age > threshold:
                     problems.append(
-                        f"Collector liveness: last tick was {age:.0f}s ago "
-                        f"(threshold {threshold:.0f}s); the collector may be "
+                        f"Collector liveness: last tick was {human_duration(age)} ago "
+                        f"(threshold {human_duration(threshold)}); the collector may be "
                         f"stuck. See Show status for detail.")
                 else:
-                    details.append(f"Collector liveness: OK, last tick {age:.0f}s ago.")
+                    details.append(
+                        f"Collector liveness: OK, last tick "
+                        f"{human_duration(age)} ago.")
 
             verdict = "problem" if problems else "ok"
             summary = "stale" if problems else "ticking"
@@ -1907,6 +2028,61 @@ class Plugin:
         except Exception as exc:
             return cls._report_not_checked(check, exc)
 
+    @classmethod
+    def _connect_report(cls, settings):
+        """Whether the named Dispatcharr Connect Integration can be delivered
+        to.
+
+        Re-reads Dispatcharr with a forced refresh rather than trusting the
+        value in `settings`, for the reason `show_redaction` does the same: the
+        operator's loop is to fix the row and immediately click Validate, and a
+        cached answer would describe the configuration they just replaced.
+
+        `skipped` when no Integration is named, so an operator who does not
+        use this channel never reads a word about it.
+        """
+        check = "Connect"
+        try:
+            name = str(settings.get("connect_integration") or "").strip()
+            if not name:
+                return cls._report(check, "skipped", None)
+            info = dispatcharr.read_connect_target(name, force_refresh=True)
+            # Write the fresh answer back, so every other check in this run
+            # sees what was just measured rather than the cached value
+            # collector.inject_derived left behind. Without this the forced
+            # refresh above bought nothing: the routing check reads these two
+            # keys and reported the stale answer. Same key names and same
+            # shape inject_derived writes, so nothing downstream can tell the
+            # two sources apart.
+            settings["_resolved_connect_target"] = info.get("target")
+            settings["_resolved_connect_info"] = {
+                k: v for k, v in info.items() if k != "target"}
+            target = info.get("target")
+            postable = bool(target) and channels.safe_url(
+                str((target or {}).get("url") or "")) is not None
+            available = info.get("available") or []
+            if postable and info.get("stale"):
+                return cls._report(
+                    check, "degraded",
+                    f"Integration '{name}': using the last known good value",
+                    ["Dispatcharr could not be read on the most recent "
+                     "attempt; delivery continues on the cached target."])
+            if postable:
+                return cls._report(check, "ok",
+                                   f"Integration '{name}': ready",
+                                   [f"Connect Integration: {name}"])
+            reason = info.get("reason") or (
+                "the Integration's URL does not start with http:// or "
+                "https://, so every send will fail")
+            problem = f"{check}: Integration '{name}': {reason}"
+            if available:
+                problem += (". Webhook Integrations that do exist: "
+                            + ", ".join(available))
+            return cls._report(check, "problem", f"Integration '{name}': "
+                               f"cannot be used", [], [problem])
+        except Exception as exc:
+            return cls._report_not_checked(check, exc)
+
     # A needle is compared against `urlsplit(url).hostname`, so anything
     # carrying a scheme, a port, a path or a leading dot can NEVER match. Those
     # entries were counted and printed under "additional:" -- a redaction no-op
@@ -1964,7 +2140,8 @@ class Plugin:
             elif info.get("stale"):
                 problems.append(
                     f"WARNING: could not re-read your EPG sources and M3U accounts; "
-                    f"using the list cached {info.get('age_s', 0):.0f}s ago. Sources "
+                    f"using the list cached {human_duration(info.get('age_s', 0))} "
+                    f"ago. Sources "
                     f"added since then are NOT redacted. ({info.get('error')})")
 
             # LOAD-BEARING: the grouped hostname list itself -- see docstring.
@@ -2230,8 +2407,8 @@ class Plugin:
                 chans = ", ".join(row["channels"]) or "(nothing)"
                 problems.append(
                     f"{self._selector_label(row['selector'])} "
-                    f"({row['severities']}) routes to {chans}, none configured "
-                    f"-- reaches nothing.")
+                    f"({row['severities']}) routes to {chans}, none of which "
+                    f"is configured, so it reaches nothing.")
         unconfigured = _unconfigured_channels(
             effective, settings.get("default_channels"), enabled)
         if unconfigured:
@@ -2292,7 +2469,8 @@ class Plugin:
             heartbeat_fresh = heartbeat_age < max_heartbeat_age
             lines.append(
                 f"heartbeat: {'ok' if heartbeat_fresh else 'STALE'} "
-                f"({heartbeat_age:.0f}s old, threshold {max_heartbeat_age:.0f}s)")
+                f"({human_duration(heartbeat_age)} old, threshold "
+                f"{human_duration(max_heartbeat_age)})")
         except OSError:
             heartbeat_age = None
             heartbeat_fresh = False
@@ -2328,7 +2506,8 @@ class Plugin:
             if os.path.exists(marker):
                 spool_full_at = os.path.getmtime(marker)
                 lines.append(
-                    f"spool_full marker present ({time.time() - spool_full_at:.0f}s "
+                    f"spool_full marker present "
+                    f"({human_duration(time.time() - spool_full_at)} "
                     f"ago); at least one CRITICAL was REFUSED and dropped "
                     f"because the queue was full. Delete {marker} once handled.")
         except OSError:
@@ -2408,7 +2587,9 @@ class Plugin:
                           f"on the last tick; nothing is being claimed or "
                           f"delivered.")
             if state.get("fail_closed_since"):
-                lines.append(f"  failing since {now - state['fail_closed_since']:.0f}s ago")
+                lines.append("  failing since "
+                             + human_duration(now - state["fail_closed_since"])
+                             + " ago")
         elif fc_count:
             # Survives recovery on purpose: an intermittent settings read is
             # exactly the shape of the one unexplained production occurrence,
@@ -2420,7 +2601,7 @@ class Plugin:
         spool_depth = len(spool_paths)
         oldest_unclaimed_s = collector.Collector._oldest_age(spool_paths, now)
         lines.append(f"queue depth: {spool_depth} "
-                      f"(oldest unclaimed {oldest_unclaimed_s:.0f}s)")
+                      f"(oldest unclaimed {human_duration(oldest_unclaimed_s)})")
         if heartbeat_fresh and oldest_unclaimed_s > 300:
             lines.append(
                 f"WARNING: {spool_depth} event(s) unclaimed for over 5 minutes "
@@ -2561,7 +2742,8 @@ class Plugin:
         elif host_info.get("stale"):
             lines.append(
                 f"WARNING: hostname list is stale (cached "
-                f"{host_info.get('age_s', 0):.0f}s ago); newly added sources are "
+                f"{human_duration(host_info.get('age_s', 0))} ago); newly added "
+                f"sources are "
                 f"NOT redacted.")
         lines.append(f"redaction: {len(effective)} hostname(s) "
                      f"({len(host_info.get('hosts') or [])} derived, "
@@ -2703,6 +2885,14 @@ class Plugin:
             problems.append(
                 f"the collector tick is raising ({tick_error.get('type')}, "
                 f"x{tick_error.get('count')}); delivery is not running.")
+        connect = state.get("connect")
+        connect = connect if isinstance(connect, dict) else {}
+        if connect.get("state") in ("broken", "unknown"):
+            problems.append(
+                f"the Dispatcharr Connect Integration cannot be used: "
+                f"{connect.get('reason') or 'it could not be read'}. Every "
+                f"event routed to the connect channel retries and then gives "
+                f"up.")
         if sidecar_write_errors:
             problems.append(
                 f"{sidecar_write_errors} sidecar write(s) failed; affected "
@@ -2812,6 +3002,13 @@ class Plugin:
         return self._result(
             ok, message, error="; ".join(problems) if problems else None,
             details=lines,
+            # `problems` is what _publish_readout_inner writes out as the
+            # "Problems (N):" block. Without it this action's readout carried
+            # only the headline, and the headline is deliberately clipped by
+            # _fit_message, so the file an operator opens DURING an outage
+            # ended mid-sentence. The other three reporting actions all pass
+            # it; this one did not, and it is the one that matters most.
+            problems=problems,
             fail_closed=fail_closed,
             fail_closed_reason=fc_reason,
             fail_closed_count=fc_count,

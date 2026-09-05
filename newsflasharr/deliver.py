@@ -139,6 +139,15 @@ class Deliverer:
         g = self.mods["gates"].Gates(state, self.settings, lambda: now)
         enabled = self.mods["channels"].enabled_channels(self.settings)
 
+        # Recorded every tick so the status action reports what the DELIVERING
+        # process resolved, which is not necessarily what the settings on the
+        # operator's screen would resolve to. Only the two flat values: the
+        # available-names list belongs on the validate readout, not in a file
+        # that gets pasted into issues.
+        connect = self.mods["channels"].connect_status(self.settings)
+        state["connect"] = {"state": connect["state"],
+                            "reason": connect["reason"]}
+
         if not enabled:
             # Fail-closed (spec §4.3): heartbeat still beats, but nothing is
             # claimed, sent, or deleted while no channel is configured.

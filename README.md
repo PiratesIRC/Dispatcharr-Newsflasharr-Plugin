@@ -25,13 +25,14 @@
 ![Last Commit](https://img.shields.io/github/last-commit/PiratesIRC/Dispatcharr-Newsflasharr-Plugin)
 ![License](https://img.shields.io/github/license/PiratesIRC/Dispatcharr-Newsflasharr-Plugin)
 
-<sub>The **newsflashes** badge is the number of notifications Newsflasharr has delivered on the maintainer's own installation, counted from its delivery ledger and refreshed twice a day. One notification that went to several channels at once counts once, whether it left over Apprise, email, a Discord or generic webhook, ntfy, or the on-screen ticker. Duplicates collapsed into a digest, banners the ticker declined, events no rule routed anywhere, and anything that failed are all excluded, so the number is deliveries rather than activity. It is one installation's total, not a project metric.</sub>
+<sub>The **newsflashes** badge is the number of notifications Newsflasharr has delivered on the maintainer's own installation, counted from its delivery ledger and refreshed twice a day. One notification that went to several channels at once counts once, whether it left over Apprise, email, a Discord or generic webhook, a Dispatcharr Connect Integration, ntfy, or the on-screen ticker. Duplicates collapsed into a digest, banners the ticker declined, events no rule routed anywhere, and anything that failed are all excluded, so the number is deliveries rather than activity. It is one installation's total, not a project metric.</sub>
 
 Central notification service for Dispatcharr plugins. One plugin
-owns all delivery: other plugins (Sentinelarr, Dustarr, Stream-Mapparr, …)
+owns all delivery: other plugins (Sentinelarr, Dustarr, Stream-Mapparr, ...)
 drop lightweight JSON events into a file spool; Newsflasharr routes them to
-any of six destinations (Discord, a generic webhook, ntfy, Apprise, email,
-and an on-screen banner over live video) with deduplication, storm throttling,
+any of seven destinations (Discord, a generic webhook, a Dispatcharr Connect
+Integration, ntfy, Apprise, email, and an on-screen banner over live video)
+with deduplication, storm throttling,
 quiet hours, and retry. Configured once, in one place, instead of every plugin
 re-inventing its own webhook code.
 
@@ -117,7 +118,8 @@ that status to destinations **you** configured.
 The plugin never contacts a media provider. It never opens, fetches, decodes,
 records, restreams or redistributes any stream. The only outbound connections
 it makes are to the notification destinations you enter yourself, such as a
-Discord webhook, an ntfy topic, an Apprise gateway or your own mail server.
+Discord webhook, a Dispatcharr Connect Integration, an ntfy topic, an Apprise
+gateway or your own mail server.
 
 **You are responsible for what you connect Dispatcharr to.** Whether a
 particular provider, subscription, playlist or stream is lawful for you to use

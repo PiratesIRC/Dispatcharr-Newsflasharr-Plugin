@@ -1,7 +1,7 @@
 # Newsflasharr caller API
 
 This is the contract for any plugin that wants to send a notification through
-Newsflasharr. It is versioned and compatibility-governed (§3.5 below) because the
+Newsflasharr. It is versioned and compatibility-governed (section 3.5 below) because the
 audience is the user's own plugins first and third-party plugins later. A
 caller vendors this client once and never has to touch it again.
 
@@ -53,7 +53,7 @@ def notify(source, title, *, event=None, body="", severity="info",
   **not** "delivered", and not even "will be delivered". Delivery, routing,
   dedup, quiet hours, and retry all happen later, inside Newsflasharr's own
   collector.
-- **Redacts before writing** (see §6 Security below): `redact()` runs on
+- **Redacts before writing** (see section 6 Security below): `redact()` runs on
   `title`/`body`/`url` **before** the 64 KB body truncation, so a truncation
   boundary landing mid-credential can never defeat the regex.
 - **Atomic write:** a dot-prefixed temp file (`.tmp-*`) is written into the
@@ -63,7 +63,7 @@ def notify(source, title, *, event=None, body="", severity="info",
 - **Payload cap:** 64 KB. Oversize bodies are truncated rather than dropped:
   the event still gets spooled and delivered.
 - **`attachment` (optional, str-coerced like `source`):** an **absolute path**
-  to a file to email as a real attachment alongside the notification. See §3a
+  to a file to email as a real attachment alongside the notification. See section 3a
   below for the full contract. It is **smtp-only**, is sent **verbatim and
   unredacted**, and has real requirements on the caller (immutable path,
   allowed extension, size). Passing it does not change what gets spooled here
@@ -107,12 +107,12 @@ def notify(source, title, *, event=None, body="", severity="info",
 | `ts` | yes | Epoch **milliseconds**. |
 | `client_v` | no | The vendored client's own version string, for diagnostics only. Currently `1.1.0`. |
 | `event` | no | Free-form event name (e.g. `black_screen`). Used in routing match and in `dedup_key` conventions, not otherwise interpreted. |
-| `kind` | no | `event` (default) or `resolve`, see §4. |
+| `kind` | no | `event` (default) or `resolve`, see section 4. |
 | `severity` | no | `critical` \| `warning` \| `info` (default `info`). Closed 3-level enum. |
 | `body` | no | Redacted, truncated to 64 KB UTF-8-safe. |
 | `dedup_key` | no | Storm-collapse identity is `(source, dedup_key)`. No `dedup_key` means no collapse: a keyless storm is only rate-capped, and is never silently defaulted to `source:event`. |
 | `url` | no | Optional link. Scheme allowlist is `http`/`https` on the delivery side, anything else is dropped before it can reach a clickable surface. |
-| `attachment` | no | Absolute path to a file to email as an attachment. **Not redacted, unlike every other field here.** See §3a. |
+| `attachment` | no | Absolute path to a file to email as an attachment. **Not redacted, unlike every other field here.** See section 3a. |
 
 `category` was deliberately cut from v1 (a free-form vocabulary invites
 silent-never-match routing rules); re-adding it later is free under the
@@ -125,7 +125,7 @@ Added in `client_v` `1.1.0`. This is the one field on the wire that is
 attacker-reachable text, and there is nothing in a path string for the
 credential regexes to usefully match.
 
-- **smtp-only.** Discord/webhook/ntfy/Apprise have no concept of an
+- **smtp-only.** Discord/webhook/connect/ntfy/Apprise have no concept of an
   attachment; if a report event routes to one of them it is delivered as an
   ordinary notification (whatever is in `url`/`body`), with no file. Only
   when it reaches the smtp channel does the file get read and attached.
@@ -145,7 +145,7 @@ credential regexes to usefully match.
   privilege boundary a hardlink could not defeat. Do not rely on it as one.
 - **Sent verbatim, byte-exact, never redacted.** No content scan runs over
   it either (an earlier design considered one, and it was cut, see the design
-  spec §5 for why a credential scan over an arbitrary HTML/CSV file is
+  spec section 5 for why a credential scan over an arbitrary HTML/CSV file is
   security theater, not a control). **Never point `attachment` at anything
   that could contain a credential, a raw stream URL, or provider hostnames.**
   If the file might contain any of that, do not attach it, link to it instead
@@ -233,9 +233,9 @@ break you, and your old client will not confuse a future Newsflasharr either.
 ## 7. Security: strings here reach the outside world
 
 Everything you pass to `title`, `body`, and `url` may be POSTed to an
-external third-party service (Discord, a generic webhook endpoint, ntfy,
-Apprise's 110-service fan-out). Treat this exactly like writing to a public
-log:
+external third-party service (Discord, a generic webhook endpoint, a
+Dispatcharr Connect Integration, ntfy, Apprise's 110-service fan-out). Treat
+this exactly like writing to a public log:
 
 - **Never place raw stream URLs, provider credentials, or unfiltered
   exception text in `title`/`body`.** `notify_client.redact()` strips the
@@ -274,7 +274,7 @@ beats `f"Failed: {raw_upstream_url}"`.
 
 **`attachment` is the one exception to all of the above.** It is a path, not
 POSTed text, and the file it points at is sent to the smtp recipient
-byte-exact with none of `redact()`/`redact_hosts()` applied. See §3a. Treat
+byte-exact with none of `redact()`/`redact_hosts()` applied. See section 3a. Treat
 it like handing someone a file directly, not like writing to a log.
 
 ## 8. Optional: publish a count of the reports you have built
@@ -351,7 +351,7 @@ Newsflasharr shows nothing, whatever the file says.
 This is unrelated to `notify()` and the spool schema above; it concerns
 Newsflasharr's own plugin *actions* (Validate settings, Show status, and so
 on), which nothing in this document calls. Recorded here only because it
-affects the same "what reaches the outside world" boundary as §7.
+affects the same "what reaches the outside world" boundary as section 7.
 
 Every action attempts to write its complete output to a file, on success OR
 failure of the action itself, and carries a `file` key with that path

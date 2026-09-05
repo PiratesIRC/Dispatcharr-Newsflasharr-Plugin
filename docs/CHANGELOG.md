@@ -1,5 +1,90 @@
 # Changelog
 
+## 1.26.2481646 (September 5, 2026)
+
+**A seventh delivery channel, and a pass over everything the plugin says to
+you.** Two things in one release, because the channel has been finished and
+running on one installation for a while and the corrections were found while
+reviewing it.
+
+### The Connect channel
+
+Newsflasharr can now deliver through a **Dispatcharr Connect Integration**.
+Dispatcharr has its own Connect page where you create webhook Integrations, each
+holding a URL and any headers it needs. Type the exact name of one into the new
+**Dispatcharr Connect Integration** setting and Newsflasharr posts its
+notifications through that row, reusing the address and headers you already
+configured there.
+
+It reads that row and never changes it. It creates nothing, edits nothing, and
+deletes nothing on the Connect page.
+
+Four things about it are worth knowing before you rely on it, and each has
+already been mistaken for a fault:
+
+- **The Integration must be of type webhook.** Dispatcharr also has a script
+  type, which runs a local script instead of posting to a URL. Newsflasharr
+  never runs a script. If the name you typed belongs to a script Integration,
+  the channel reports that it cannot be used and sends nothing.
+- **The name must match exactly**, and it is looked up live against
+  Dispatcharr rather than stored here. Renaming that row stops delivery.
+- **These deliveries do not appear on the Connect page's own Logs tab.**
+  Dispatcharr logs only deliveries belonging to its own system events, and a
+  Newsflasharr notification is not one of those. Look in Show status instead.
+- **An address carrying a username or password is refused**, rather than used
+  with the credential stripped out, because a credential in a URL ends up in
+  error messages.
+
+### Corrections to what the plugin tells you
+
+Fourteen statements the plugin or its guide made were wrong. The ones you are
+most likely to have hit:
+
+- **Every action output file named a location it was often not at.** Each file
+  opens with a line saying where it is. That line always said
+  `/config/newsflasharr/`, which is only where the file goes if your
+  installation mounts a host directory there. On a stock Dispatcharr image it
+  goes to `/data/newsflasharr/readouts/` instead, so the line pointed at a file
+  that does not exist. It now names the file you are actually holding, and says
+  which of the two places it went to and why.
+- **Show status left its own problems out of its output file.** That file
+  exists to carry what the small pop-up cannot, and for the one action you open
+  during an outage it carried a sentence cut off in the middle. It now lists
+  every problem in full.
+- **Ages were printed as raw seconds.** A stalled collector reported
+  `1001740s old`. It now reads `11d 14h`, and so do the queue age, the
+  hostname cache age and the rest.
+- **Validate settings reported a Connect Integration you had just switched on
+  as still switched off**, in red, for up to five minutes. It re-reads
+  Dispatcharr precisely so that fixing a row and checking works, and it was
+  discarding the answer. The same fault also reported one unusable Integration
+  twice in one output.
+- **A typo in the Integration name made the plugin re-query Dispatcharr every
+  five seconds, indefinitely.** Measured at twelve database queries a minute
+  against one for a name that matches. A name that matches nothing is now
+  remembered for thirty seconds.
+- **A header whose name ended in a line break was accepted and then failed at
+  send time**, quoting itself into the delivery record, instead of being
+  refused up front like every other unusable header.
+
+### Smaller corrections you may notice
+
+The **Banner appearance** heading said it governed four settings and governs
+five. The **Routing** heading said the same thing twice. The **Start here**
+panel listed six of the seven channel names you can type into Default channels
+and left out `ticker`, while the test button's own text told you to use it. The
+user guide said a critical alert always bypasses quiet hours, which is the
+default of a setting you can turn off, not a rule. Six settings and two buttons
+were documented nowhere and now are, including **Flush held notifications** and
+the whole Noise control group.
+
+Button colour now means one thing each: blue reads and reports, cyan sends
+something out, orange moves real traffic. Nothing is red, because nothing this
+plugin does deletes anything of yours.
+
+Nothing here changes how notifications are routed or delivered, and there is
+nothing to reconfigure after upgrading.
+
 ## 1.26.2241159 (August 12, 2026)
 
 **Documentation corrections for the on-screen ticker.** No code changed in this

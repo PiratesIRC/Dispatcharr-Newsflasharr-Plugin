@@ -68,6 +68,7 @@ DEFAULTS = {
     "smtp_password": "",
     "smtp_from": "",
     "smtp_to": "",
+    "connect_integration": "",
     "default_channels": "",
     "routing_rules": "[]",
     "critical_extra_channels": "none",
@@ -414,6 +415,14 @@ def inject_derived(settings):
     Never raises: derivation failing must not turn into an unreadable
     settings row (which fails the tick closed) or an exception escaping
     `Plugin.run()`."""
+    # Written before the early return below. An ABSENT resolution and a FAILED
+    # one are different states, and a consumer that has to tell them apart from
+    # a missing key ends up treating "cannot tell" as "healthy", which is the
+    # shape this workspace has shipped four times.
+    settings["_resolved_connect_target"] = None
+    settings["_resolved_connect_info"] = {"found": False, "reason": None,
+                                          "available": [], "stale": False,
+                                          "error": None}
     mod = _dispatcharr_mod()
     if mod is None:
         return settings
@@ -429,6 +438,25 @@ def inject_derived(settings):
         settings["_resolved_host_info"] = host_info
     except Exception:
         pass
+    # Resolved HERE, once per settings load, rather than in the channel
+    # builder: channels.py must stay standalone-loadable and cannot import a
+    # sibling without the hand-written loader `_email_render` needs, and the
+    # result is then plain data that the reporting surfaces read with no
+    # database access at all.
+    name = str(settings.get("connect_integration") or "").strip()
+    if name:
+        try:
+            info = mod.read_connect_target(name)
+        except Exception as exc:
+            # read_connect_target does not raise. inject_derived must not be
+            # the one caller that assumes so: it runs on every settings load,
+            # including the one behind every operator button.
+            info = {"target": None, "found": False, "reason": None,
+                    "available": [], "stale": False,
+                    "error": type(exc).__name__}
+        settings["_resolved_connect_target"] = info.get("target")
+        settings["_resolved_connect_info"] = {k: v for k, v in info.items()
+                                              if k != "target"}
     return settings
 
 

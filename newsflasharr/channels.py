@@ -31,7 +31,7 @@ import urllib.request
 # terminal (never retried) semantics, not a network send. It is listed here so
 # routing.lint accepts it in an operator's channel list and show_status can report
 # it -- a name routing rejects is a name the operator cannot use.
-KNOWN = ("discord", "webhook", "ntfy", "apprise", "smtp", "ticker")
+KNOWN = ("discord", "webhook", "connect", "ntfy", "apprise", "smtp", "ticker")
 USER_AGENT_PREFIX = "Dispatcharr-Newsflasharr/"
 DISCORD_LIMIT = 2000
 
@@ -296,7 +296,7 @@ def redact_hosts(text, hosts):
     return "".join(out)
 
 
-def _safe_reason(exc):
+def _safe_reason(exc, text=None):
     """Exception text, with any embedded URL masked.
 
     NOTE: this is `://`-gated, not exhaustive — a schemeless URL (no
@@ -305,8 +305,14 @@ def _safe_reason(exc):
     see the target-scheme validation in each `_*_request` builder and
     the build-failure branch in `send()`, which reports only
     `type(exc).__name__` for exactly this reason.
+
+    `text`, when given, is used INSTEAD of `str(exc)` -- the caller in
+    `send()` runs `_mask_request_target`/`_mask_request_header_values` on the
+    raw, untruncated exception text FIRST (see those functions' docstrings
+    for why order matters), then hands the result in here as a fallback pass
+    for any leftover `://` text those exact-match maskers did not cover.
     """
-    text = str(exc)
+    text = str(exc) if text is None else text
     if "://" in text:
         text = _URL_RE.sub(lambda m: mask_target(m.group(0)), text)
     return text
@@ -322,6 +328,167 @@ class _InvalidTarget:
 
 
 _INVALID_TARGET = _InvalidTarget()
+
+
+class _Unresolved:
+    """Sentinel returned by a builder when the target could not be resolved,
+    carrying WHICH condition applies.
+
+    Distinct from `None` ("not configured") and `_INVALID_TARGET`
+    ("configured but unpostable"). The reason must always be a fixed literal,
+    never a string built from a configuration value, because it travels into
+    the delivery failure detail, which reaches state.json and the readout
+    files with no masking applied."""
+
+    def __init__(self, reason):
+        self.reason = reason
+
+
+# Below this length a header value reads as an ordinary operational flag (a
+# priority level, an environment code) rather than a credential -- measured
+# 2026-08-24: an Integration row carrying `X-Priority: 1` / `X-Env: e` made
+# an UNRELATED connection failure (Errno text, containing "r", "n", "d" as
+# single characters shared with those values) render as a string of
+# <redacted> tokens with the actual cause destroyed. The failure detail is
+# the only surface naming why a send failed, so masking must not be allowed
+# to consume it on values this short.
+#
+# This BOUNDS the shredding of an unrelated failure message; it does not
+# eliminate the risk of a leak. A secret shorter than the floor, or a header
+# value of eight characters or more that happens to be an ordinary English
+# word, is deliberately left unmasked and will still consume that word from
+# the detail text if it is present -- both are accepted trade-offs of buying
+# back a diagnosable failure message, not gaps a future reader should treat
+# as closed.
+_MIN_MASKED_HEADER_VALUE_LEN = 8
+
+# The channel's OWN headers (`_headers()` always sets both), never a value
+# from a row the plugin does not own -- these are never secret and must
+# never be candidates for masking regardless of length.
+_OWN_HEADER_NAMES = frozenset({"content-type", "user-agent"})
+
+
+def _mask_request_header_values(text, request):
+    """Replace any header VALUE carried by `request` that appears verbatim in
+    `text`, with `<redacted>` -- except the channel's own `Content-Type` and
+    `User-Agent` (see `_OWN_HEADER_NAMES`), and any value shorter than
+    `_MIN_MASKED_HEADER_VALUE_LEN`.
+
+    `_safe_reason` is gated on `"://"`, which never fires for a message such
+    as `ValueError("Invalid header value b'Bearer S3CR3T'")` -- that text
+    carries no URL at all. The connect channel is the only one whose headers
+    can come from a row the plugin does not own (an Integration's own extra
+    headers, resolved by `collector.inject_derived`), so it is the only
+    channel that can put a genuine credential into an otherwise-inert header
+    value; this runs for every channel's send() failure uniformly rather than
+    special-casing one name.
+    """
+    try:
+        for name, value in request.headers.items():
+            if name.lower() in _OWN_HEADER_NAMES:
+                continue
+            value = str(value)
+            if len(value) < _MIN_MASKED_HEADER_VALUE_LEN:
+                continue
+            if value in text:
+                text = text.replace(value, "<redacted>")
+    except Exception:
+        pass
+    return text
+
+
+def _mask_request_target(text, request):
+    """Replace the request's own full URL, verbatim, with `scheme://host` (no
+    userinfo, no path) if it appears in `text`, and replace the address's own
+    PASSWORD wherever it appears whether the full URL matched or not.
+
+    The password pass is defence in depth, and it exists because the full-URL
+    match is an exact one. Measured 2026-08-24 on
+    `https://user:PA55W0RD@host.invalid/hooks/HOOKTOK9`: `urllib.request`
+    leaves the userinfo on the request host, so `http.client` splits that host
+    on its first colon, reads the password as a port and raises `InvalidURL`
+    with a message quoting `PA55W0RD@host.invalid` and NOTHING ELSE of the
+    address. The full URL is absent from that text, so the exact match never
+    fires, and `_safe_reason` is gated on `://`, which that text also lacks.
+    `dispatcharr._has_userinfo` now refuses such an address outright, which is
+    the primary fix; this layer means a password that reaches here by some
+    other route still does not reach the failure detail.
+
+    Reading `.password` is safe where reading `.port` is not: it splits the
+    userinfo and never touches the port, so the non-numeric-port `ValueError`
+    that this function already fails closed on cannot come from it.
+
+    Called on the RAW, UNTRUNCATED exception text -- i.e. BEFORE
+    `_safe_reason` has had a chance to run its own `"://"`-gated
+    `mask_target` pass -- because `mask_target` truncates the path down to
+    its first segment, and an exact-string match against `request.full_url`
+    then only succeeds by coincidence (a one-path-segment URL, where the
+    truncated form happens to still start with the original literal).
+    Measured 2026-08-24: a two-segment path (`/hooks/HOOKTOK9`) broke that
+    coincidence and the password in the URL's userinfo, which `mask_target`
+    never strips at all, leaked in full.
+
+    Unlike `mask_target`, this drops the ENTIRE path and any userinfo rather
+    than keeping the first path segment: `mask_target`'s contract assumes an
+    identifying prefix and a secret suffix (Discord's
+    `/api/webhooks/<id>/<token>` shape), which does not hold for a Connect
+    Integration's resolved URL -- it may have no structure beyond a single
+    opaque path segment that IS the credential. Scheme and host are kept so
+    the failure detail still names which endpoint failed, matching this
+    codebase's rule that a channel's OWN target host is diagnostic
+    information, never a secret.
+
+    Fails CLOSED on a parse error, the same convention `redact_hosts` follows
+    elsewhere in this file. Reading `.port` raises `ValueError` for a
+    non-numeric port -- an operator typo Dispatcharr never validates
+    (`dispatcharr.py` documents that it does not validate the Integration
+    URL, and `connect_status` checks only the scheme, via `safe_url`). A
+    failure while deriving the replacement must still remove the address:
+    it falls back to the blanket `<redacted-url>` placeholder rather than
+    returning `text` unmasked, which would leave the raw url -- userinfo,
+    password included -- sitting in the returned text. Measured 2026-08-24:
+    before this fallback existed, a bad port made
+    `urllib.parse.urlsplit(url).port` raise, this function returned `text`
+    unchanged, and `_safe_reason`'s own fallback mask kept the netloc
+    (including the password) verbatim.
+    """
+    try:
+        url = request.full_url
+    except Exception:
+        return text
+    if not url:
+        return text
+
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except Exception:
+        parsed = None
+
+    # The full-URL pass runs FIRST. Replacing the password first would break
+    # the exact match this pass depends on, leaving the rest of the address --
+    # its path, which on a Connect Integration may itself BE the credential --
+    # sitting in the text unmasked. Measured 2026-08-24 against
+    # `test_connect_detail_never_carries_the_url_or_a_header_value`.
+    if url in text:
+        replacement = "<redacted-url>"
+        if parsed is not None:
+            try:
+                host = parsed.hostname or ""
+                port = f":{parsed.port}" if parsed.port else ""
+                if host:
+                    replacement = f"{parsed.scheme}://{host}{port}"
+            except Exception:
+                replacement = "<redacted-url>"
+        text = text.replace(url, replacement)
+
+    if parsed is not None:
+        try:
+            password = parsed.password
+        except Exception:
+            password = None
+        if password and password in text:
+            text = text.replace(password, "<redacted>")
+    return text
 
 
 def _headers(version, extra=None):
@@ -345,6 +512,63 @@ def _strip_control_chars(text):
         else:
             out.append(c)
     return "".join(out)
+
+
+def connect_status(settings):
+    """`{"state", "reason", "available", "stale", "unpostable"}` for the
+    connect channel. Pure: reads only the settings dict, never a database.
+
+    `state` is one of:
+      "off"     the operator named no Integration; the channel is disabled
+      "unknown" a name is set but NO resolution has been recorded, so this
+                function cannot tell. It is a distinct value, never folded
+                into "ok", because a predicate that cannot tell and answers
+                "healthy" is the shape this workspace has shipped four times.
+      "ok"      a postable target is available (possibly a stale one, which
+                still delivers)
+      "broken"  a resolution was recorded and failed, or the resolved URL is
+                not postable
+
+    Membership is tested with `in`, never `dict.get`, which cannot tell an
+    absent key from a present-but-None one.
+
+    BOTH resolved values are type-guarded, mirroring the guard on the
+    consuming side in `plugin.py`. `deliver.tick` calls this function BEFORE
+    the branch that fails closed when no channel is enabled, and does not wrap
+    the call, so a non-dictionary under either key would raise there and stop
+    delivery on every channel rather than on this one. Nothing writes such a
+    value today, because `collector.inject_derived` overwrites both keys
+    unconditionally before its own early return, but that ordering must not be
+    what keeps the other six channels delivering.
+    """
+    name = str(settings.get("connect_integration") or "").strip()
+    out = {"state": "off", "reason": None, "available": [], "stale": False,
+           "unpostable": False}
+    if not name:
+        return out
+    if "_resolved_connect_info" not in settings:
+        out["state"] = "unknown"
+        out["reason"] = ("the Integration has not been resolved yet; "
+                         "Dispatcharr could not be read")
+        return out
+    info = settings.get("_resolved_connect_info")
+    info = info if isinstance(info, dict) else {}
+    out["available"] = list(info.get("available") or [])
+    out["stale"] = bool(info.get("stale"))
+    target = settings.get("_resolved_connect_target")
+    if not isinstance(target, dict) or not target:
+        out["state"] = "broken"
+        out["reason"] = info.get("reason") or (
+            "the Integration could not be read from Dispatcharr")
+        return out
+    if safe_url(str(target.get("url") or "")) is None:
+        out["state"] = "broken"
+        out["unpostable"] = True
+        out["reason"] = ("the Integration's URL does not start with http:// "
+                         "or https://, so every send will fail")
+        return out
+    out["state"] = "ok"
+    return out
 
 
 def enabled_channels(settings):
@@ -373,6 +597,14 @@ def enabled_channels(settings):
     # and nothing would ever be claimed.
     if settings.get("ticker_enabled"):
         out.append("ticker")
+    # Counted on the NAME alone, deliberately unlike the smtp and ntfy rules
+    # above. Excluding an unresolvable connect would filter it out of the
+    # routed list, so an event routed only here would be recorded as reaching
+    # nothing rather than entering the retry ladder. The honesty those rules
+    # protect is provided by unusable_channels and by the status action, both
+    # of which report the condition in red.
+    if str(settings.get("connect_integration") or "").strip():
+        out.append("connect")
     return [name for name in KNOWN if name in out]
 
 
@@ -409,6 +641,13 @@ def unusable_channels(settings):
             out.append((name, f"{key} is not an http(s) URL; delivery will "
                               f"fail on every event until it starts with "
                               f"http:// or https://"))
+    status = connect_status(settings)
+    if status["state"] in ("broken", "unknown"):
+        reason = status["reason"]
+        if status["available"]:
+            reason = (f"{reason}. Webhook Integrations that do exist: "
+                      f"{', '.join(status['available'])}")
+        out.append(("connect", reason))
     return [(n, r) for n, r in out if n in KNOWN]
 
 
@@ -492,6 +731,49 @@ def _webhook_request(event, settings, version):
                                    headers=_headers(version))
 
 
+def _connect_request(event, settings, version):
+    """POST to the Integration resolved by `collector.inject_derived`. The
+    payload is byte-identical to the generic webhook channel's, so a receiver
+    already handling Newsflasharr webhooks needs no change.
+
+    Trusts that `target.get("headers")` never carries `Content-Type`,
+    `User-Agent`, `Host`, `Content-Length` or `Transfer-Encoding` (in any
+    case): `dispatcharr._clean_connect_headers` drops all five before a
+    resolved target is ever written into settings (see
+    `_CONNECT_OWNED_HEADERS` there, and
+    `test_read_connect_target_drops_headers_it_must_own` /
+    `test_connect_builder_trusts_the_resolver_to_have_stripped_owned_headers`
+    in tests/test_dispatcharr.py, which prove the chain end to end). This
+    builder and `_headers()` below do NOT re-check, so a caller feeding a
+    hand-built target straight to `_connect_request` -- bypassing the
+    resolver -- CAN override those headers; no production settings dict can
+    do so.
+    """
+    status = connect_status(settings)
+    if status["state"] == "off":
+        return None
+    if status["state"] == "unknown":
+        return _Unresolved(status["reason"])
+    if status["state"] == "broken":
+        if status["unpostable"]:
+            return _INVALID_TARGET
+        return _Unresolved(status["reason"])
+    target = settings.get("_resolved_connect_target") or {}
+    url = safe_url(str(target.get("url") or ""))
+    if url is None:                      # unreachable via connect_status; kept
+        return _INVALID_TARGET           # so this function is safe alone
+    payload = {"plugin": "newsflasharr",
+               "source": event.get("source"), "event": event.get("event"),
+               "severity": event.get("severity"), "kind": event.get("kind"),
+               "title": event.get("title"), "body": event.get("body"),
+               "url": event.get("url"), "ts": event.get("ts")}
+    data = json.dumps(payload).encode("utf-8")
+    return urllib.request.Request(url, data=data, method="POST",
+                                  headers=_headers(version,
+                                                   dict(target.get("headers")
+                                                        or {})))
+
+
 def _ntfy_request(event, settings, version):
     server = (settings.get("ntfy_server") or "").strip().rstrip("/")
     if not server:
@@ -554,7 +836,34 @@ def _apprise_request(event, settings, version):
 
 
 _BUILDERS = {"discord": _discord_request, "webhook": _webhook_request,
+             "connect": _connect_request,
              "ntfy": _ntfy_request, "apprise": _apprise_request}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuses every redirect. Returning None makes urllib raise HTTPError
+    carrying the 3xx code, which send() renders as `connect: HTTP <code>`.
+
+    Python's redirect handler rebuilds the request stripping only
+    content-length and content-type, so an Authorization header taken from the
+    Integration row would be forwarded to whatever host the redirect names,
+    and the send would report success. This is the only channel whose
+    credential comes from a row the plugin does not own."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_CONNECT_OPENER = None
+
+
+def _connect_opener():
+    """Built lazily. build_opener at import time would run on Dispatcharr's
+    per-request hot path through the plugin's constructor."""
+    global _CONNECT_OPENER
+    if _CONNECT_OPENER is None:
+        _CONNECT_OPENER = urllib.request.build_opener(_NoRedirect)
+    return _CONNECT_OPENER
 
 
 # -- smtp ---------------------------------------------------------------------
@@ -808,8 +1117,13 @@ def send(name, event, settings, version, opener=None, timeout=None,
         return False, f"{name}: not configured"
     if request is _INVALID_TARGET:
         return False, f"{name}: invalid target URL"
+    if isinstance(request, _Unresolved):
+        return False, f"{name}: {request.reason}"
+    if not isinstance(request, urllib.request.Request):
+        return False, f"{name}: build failed (unrecognised request)"
 
-    send_fn = opener or urllib.request.urlopen
+    send_fn = opener or (_connect_opener().open if name == "connect"
+                         else urllib.request.urlopen)
     if timeout is None:
         timeout = DEFAULT_HTTP_TIMEOUT_S
     try:
@@ -819,4 +1133,10 @@ def send(name, event, settings, version, opener=None, timeout=None,
     except urllib.error.HTTPError as exc:
         return False, f"{name}: HTTP {exc.code}"
     except Exception as exc:                        # never raises to the caller
-        return False, f"{name}: {type(exc).__name__} {_safe_reason(exc)}".strip()
+        # Order matters (see _mask_request_target's docstring): mask on the
+        # RAW text first, so the exact-match premise holds regardless of path
+        # shape, then let _safe_reason's regex pass catch anything left over.
+        pre_masked = _mask_request_header_values(
+            _mask_request_target(str(exc), request), request)
+        reason = _safe_reason(exc, text=pre_masked)
+        return False, f"{name}: {type(exc).__name__} {reason}".strip()

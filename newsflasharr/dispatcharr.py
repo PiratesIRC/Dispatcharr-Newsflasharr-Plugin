@@ -1,4 +1,5 @@
-"""Reads Dispatcharr's OWN configuration: system timezone + provider hostnames.
+"""Reads Dispatcharr's OWN configuration: system timezone, provider hostnames,
+and Connect Integrations.
 
 Two settings used to be typed by hand into Newsflasharr's UI and are now derived
 from Dispatcharr itself:
@@ -45,9 +46,25 @@ import zoneinfo
 RUNTIME_KEY = "_newsflasharr_runtime"
 HOST_CACHE_ATTR = "notifyarr_host_cache"
 TZ_CACHE_ATTR = "notifyarr_tz_cache"
+CONNECT_CACHE_ATTR = "notifyarr_connect_cache"
 
 HOST_TTL_S = 300.0
 TZ_TTL_S = 300.0
+CONNECT_TTL_S = 300.0
+
+# How long a NO-MATCH answer is held. Deliberately far shorter than
+# CONNECT_TTL_S: a name matching nothing is usually a typo, but it is also the
+# state that exists for a few seconds while the operator is creating the row,
+# and reporting a row you just made as missing for five minutes reads as a
+# broken plugin.
+#
+# It used to be zero, meaning not cached at all, which made a typo re-query
+# every Integration row on EVERY collector tick, forever, from inside the
+# gevent worker holding the collector lease. Measured at the default 5s poll:
+# a matching name cost 1 query per 12 ticks, a typo cost 12. Thirty seconds
+# brings that to 2 per minute while keeping the create-then-check loop usable,
+# and Validate is unaffected either way because it forces a refresh.
+CONNECT_MISS_TTL_S = 30.0
 
 FALLBACK_TZ = "UTC"
 
@@ -383,3 +400,246 @@ def _host_info(entry, now, stale, error=None):
             "stale": stale,
             "age_s": max(0.0, now - entry.get("at", now)),
             "error": error}
+
+
+# -- Connect Integration ------------------------------------------------------
+
+CONNECT_NO_MATCH = ("no webhook Integration on Dispatcharr's Connect page has "
+                    "that name")
+CONNECT_AMBIGUOUS = ("more than one Integration has that name; rename one on "
+                     "Dispatcharr's Connect page")
+CONNECT_DISABLED = "the Integration is switched off on Dispatcharr's Connect page"
+CONNECT_NOT_WEBHOOK = ("the Integration is not a webhook Integration; this "
+                       "channel does not run script Integrations")
+CONNECT_NO_URL = "the Integration has no URL in its configuration"
+CONNECT_URL_USERINFO = ("the Integration's URL carries a username or password "
+                        "in the address; put the credential in a header on "
+                        "the Integration instead")
+CONNECT_BAD_HEADERS = ("the Integration's headers are not usable; they must be "
+                       "plain text names and values with no line breaks")
+CONNECT_LOOKUP_FAILED = "could not read the Integration list from Dispatcharr"
+
+# Headers this channel owns. An operator value here does not customise the
+# request, it breaks it or hides it:
+#   - Content-Length and Transfer-Encoding frame the body, so a wrong value
+#     mis-frames it against the receiver.
+#   - Host sends the request, and any credential travelling with it, to a
+#     different virtual host than the URL names.
+#   - Content-Type would mislabel a body this channel always sends as JSON.
+#   - User-Agent carries the plugin version the delivery ledger is correlated
+#     against, and Discord's edge rejects an unexpected one (see the note at
+#     the top of channels.py).
+# Dropped rather than refused, because a header block pasted from a vendor's
+# documentation often carries them harmlessly.
+_CONNECT_OWNED_HEADERS = frozenset({"content-length", "transfer-encoding",
+                                    "host", "content-type", "user-agent"})
+
+# A header NAME is validated positively, against the RFC 7230 token character
+# set. A negative check misses a name containing a colon, a space, or an empty
+# name, all of which are storable in Dispatcharr's JSON config column and all
+# of which make http.client raise at SEND time, past this channel's own error
+# handling, with a message that quotes the name into the delivery ledger.
+#
+# MATCHED WITH fullmatch, NEVER match. Python's "$" also matches immediately
+# before a TRAILING NEWLINE, so `match()` accepted "X-Evil\n" while
+# http.client's own `_is_legal_header_name`, which uses fullmatch, refused it.
+# Measured through a real send: the delivery detail read
+# `connect: ValueError Invalid header name b'X-Evil\n'`, so the one name shape
+# this positive check was written to catch was the one it let through.
+_CONNECT_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+
+# Refused in a header VALUE. The carriage return is the dangerous one:
+# http.client raises ValueError whose message quotes the value verbatim. A bare
+# newline followed by a space is an obsolete line fold that http.client
+# ACCEPTS, and receivers parse folds inconsistently, so it is refused here.
+# Written as escapes: revision 1 embedded U+2028 and U+2029 as literal
+# characters, invisible to a reviewer and destroyable by any formatter.
+_CONNECT_VALUE_RE = re.compile("[\x00-\x1f\x7f\u2028\u2029]")
+
+
+def _clean_connect_headers(raw):
+    """`(headers, ok)`. `({}, True)` when the row carries none.
+
+    Dispatcharr validates this value NOT AT ALL: `Integration.config` is a
+    plain JSON column and its serializer checks only that `url` is a non-empty
+    string, so a list, a string, or a mapping of numbers is storable.
+    """
+    if raw is None:
+        return {}, True
+    if not isinstance(raw, dict):
+        return None, False
+    cleaned = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            return None, False
+        if not _CONNECT_NAME_RE.fullmatch(key):
+            return None, False
+        if key.lower() in _CONNECT_OWNED_HEADERS:
+            continue
+        if _CONNECT_VALUE_RE.search(value):
+            return None, False
+        try:
+            value.encode("latin-1")
+        except UnicodeEncodeError:
+            return None, False
+        cleaned[key] = value
+    return cleaned, True
+
+
+_CONNECT_NAME_DISPLAY_MAX = 60
+_CONNECT_NAMES_LISTED_MAX = 10
+
+
+def _display_names(names):
+    """Integration names, safe to put in a report. They come from a database
+    row any Dispatcharr user with Connect access can write, so control
+    characters are stripped and each name is capped; the list is deduped,
+    sorted and bounded so one row cannot flood a readout."""
+    out = []
+    for name in sorted(set(names)):
+        clean = _CONNECT_VALUE_RE.sub(" ", name).strip()
+        if clean:
+            out.append(clean[:_CONNECT_NAME_DISPLAY_MAX])
+    return out[:_CONNECT_NAMES_LISTED_MAX]
+
+
+def _query_connect_rows():
+    """Every Integration row as plain dicts. Raises on any database fault; the
+    caller turns that into a reason plus a degraded read."""
+    from apps.connect.models import Integration
+
+    rows = []
+    for row in Integration.objects.all():
+        rows.append({
+            "name": str(getattr(row, "name", "") or ""),
+            "type": str(getattr(row, "type", "") or ""),
+            "enabled": bool(getattr(row, "enabled", False)),
+            "config": getattr(row, "config", None) or {},
+        })
+    return rows
+
+
+def _has_userinfo(url):
+    """True when the address embeds a username or a password.
+
+    Such an address is refused rather than posted to, for two reasons that
+    both bite before any byte reaches the network. `urllib.request` does not
+    strip the userinfo from the request host, so `http.client` splits the
+    host on its first colon, reads the password as a port and raises
+    `InvalidURL` quoting the password back; that text becomes the delivery
+    failure detail, which lands in `state.json` and in the status readout.
+    And the channel could never have worked anyway, so refusing here also
+    stops `channels.connect_status` reporting the Integration ready while
+    every send fails.
+
+    Reading `.username` / `.password` is safe where reading `.port` is not:
+    those two properties split the userinfo and never touch the port, so the
+    non-numeric-port `ValueError` cannot come from here. A `urlsplit` that
+    raises outright is left to `channels.safe_url`, which fails closed on it
+    and reports the target unpostable.
+    """
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        return bool(parsed.username) or bool(parsed.password)
+    except Exception:
+        return False
+
+
+def _resolve_connect_rows(name, rows):
+    """Pure. `(target, reason, available)` for `name` against `rows`."""
+    available = _display_names(r["name"] for r in rows
+                              if r["type"] == "webhook" and r["name"])
+    wanted = name.strip().lower()
+    matches = [r for r in rows if r["name"].strip().lower() == wanted]
+    if not matches:
+        return None, CONNECT_NO_MATCH, available
+    if len(matches) > 1:
+        return None, CONNECT_AMBIGUOUS, available
+    row = matches[0]
+    # Type before enabled: a script row that is also switched off must report
+    # what it IS, or the operator switches it on and it still does not work.
+    if row["type"] != "webhook":
+        return None, CONNECT_NOT_WEBHOOK, available
+    if not row["enabled"]:
+        return None, CONNECT_DISABLED, available
+    config = row["config"] if isinstance(row["config"], dict) else {}
+    url = config.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return None, CONNECT_NO_URL, available
+    if _has_userinfo(url.strip()):
+        return None, CONNECT_URL_USERINFO, available
+    headers, ok = _clean_connect_headers(config.get("headers"))
+    if not ok:
+        return None, CONNECT_BAD_HEADERS, available
+    return {"url": url.strip(), "headers": headers}, None, available
+
+
+def read_connect_target(name, now_fn=time.time, force_refresh=False):
+    """`{"target", "found", "reason", "available", "stale", "error"}`.
+
+    `target` is `{"url": str, "headers": dict}` or None. `reason` is one of the
+    CONNECT_* literals above, or None when the name is blank, because blank
+    means the channel is switched off and that is not a misconfiguration.
+
+    EVERY OUTCOME OF A QUERY THAT SUCCEEDED IS CACHED against the name it was
+    resolved for, for CONNECT_TTL_S, EXCEPT CONNECT_NO_MATCH which is held for
+    the much shorter CONNECT_MISS_TTL_S. The no-match reason alone is the one
+    an operator clears from Dispatcharr's side seconds later: the loop is to
+    create the Integration and then check, and a five-minute cached no-match
+    would report the row missing well after it was created. Every other reason
+    is a stable state (a disabled row, a script row, a missing URL, an address
+    carrying a credential, unusable headers).
+
+    NO-MATCH WAS ONCE NOT CACHED AT ALL, and that was worse than a short
+    cache: a typo'd name re-queried every Integration row on every
+    five-second collector tick, forever, from inside a web worker, which is
+    the same cost this docstring cites as the reason to cache the rest.
+    Measured over twelve ticks: a matching name cost one query, a typo cost
+    twelve. `_connect_report` forces a refresh, so the button an operator
+    presses after creating a row is unaffected by either lifetime. `read_redact_hosts` caches on the same
+    rule: it stores every successful query, including one that yields nothing,
+    and leaves only an exception uncached. A LOOKUP THAT RAISED is likewise
+    not cached here.
+
+    A lookup failure degrades to the last good target and reports `stale`. It
+    is deliberately NOT fail-closed: a database hiccup must not stop delivery
+    on every other channel.
+
+    The URL is NOT validated here. `channels.safe_url` is the one predicate
+    that decides whether a target is postable, and duplicating it in this
+    module would let configuration time and send time drift apart.
+    """
+    blank = {"target": None, "found": False, "reason": None, "available": [],
+             "stale": False, "error": None}
+    if not name or not str(name).strip():
+        return blank
+
+    name = str(name)
+    now = now_fn()
+    cached = _cache_get(CONNECT_CACHE_ATTR)
+    if not force_refresh and cached and cached.get("name") == name:
+        ttl = (CONNECT_MISS_TTL_S if cached.get("reason") == CONNECT_NO_MATCH
+               else CONNECT_TTL_S)
+        if now - cached.get("at", 0) < ttl:
+            return {k: v for k, v in cached.items()
+                    if k not in ("at", "name")}
+
+    try:
+        rows = _query_connect_rows()
+    except Exception as exc:
+        info = {"target": None, "found": False,
+                "reason": CONNECT_LOOKUP_FAILED, "available": [],
+                "stale": False, "error": type(exc).__name__}
+        if cached and cached.get("name") == name and cached.get("target"):
+            info["target"] = cached["target"]
+            info["stale"] = True
+        return info
+
+    target, reason, available = _resolve_connect_rows(name, rows)
+    info = {"target": target, "found": target is not None, "reason": reason,
+            "available": available, "stale": False, "error": None}
+    # Every outcome of a query that SUCCEEDED is cached, including no-match,
+    # which is held for the shorter CONNECT_MISS_TTL_S. Leaving it uncached
+    # made a typo'd name re-query on every collector tick indefinitely.
+    _cache_set(CONNECT_CACHE_ATTR, dict(info, at=now, name=name))
+    return info

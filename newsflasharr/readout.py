@@ -78,8 +78,29 @@ def _default_opener(base_dir):
     return fd, tmp
 
 
-def write(action, body, base_dir=DEFAULT_DIR, opener=None, fallback_dir=None):
+def write(action, body, base_dir=DEFAULT_DIR, opener=None, fallback_dir=None,
+          header=None):
     """Write `<action>.txt` under base_dir, or under fallback_dir. NEVER raises.
+
+    `header` is an optional callable taking `(path, fell_back)` and returning
+    text to place above `body`. It exists because the header names the file's
+    own location, and which of the two directories is used is not known until
+    this function has tried one. Composing the header in the caller instead
+    asserted the PREFERRED path on every readout, including the ones that
+    landed in the fallback, so on any installation without a writable /config
+    every file told its reader to look where it is not.
+
+    `fell_back` is passed rather than left for the header to work out. The
+    first version handed over only the path and the header inferred the rest
+    by testing it against DEFAULT_DIR, which is wrong for any base_dir that is
+    not literally DEFAULT_DIR: a successful write then described itself as a
+    failed one. Deriving a fact this function already holds is the same
+    mistake the callable exists to remove.
+
+    A header that RAISES is not retried against the second directory. A header
+    fault is not a property of the directory, so a retry pays for the same
+    failure twice and reports one fault as two, which is the reasoning already
+    applied to a write failure below.
 
     -> (path, None) on success, (None, reason) on failure. `path` names the
     directory actually used, so a caller surfacing it tells the operator where
@@ -116,26 +137,50 @@ def write(action, body, base_dir=DEFAULT_DIR, opener=None, fallback_dir=None):
         # tried either: the id is the problem, and a second directory cannot
         # make it safe.
         return None, "BadAction"
-    path, reason = _write_to(action, body, base_dir, opener)
-    if path is not None or not fallback_dir or fallback_dir == base_dir:
+    path, reason = _write_to(action, body, base_dir, opener, header, False)
+    if (path is not None or not fallback_dir or fallback_dir == base_dir
+            or str(reason).startswith("HeaderError/")):
         # Retrying the SAME directory would pay for the failure twice and
-        # report one fault as two.
+        # report one fault as two. A raising header is the same case: the
+        # fault travels with the header, not with the directory.
         return path, reason
-    return _write_to(action, body, fallback_dir, opener)
+    return _write_to(action, body, fallback_dir, opener, header, True)
 
 
-def _write_to(action, body, base_dir, opener):
+def _write_to(action, body, base_dir, opener, header=None, fell_back=False):
     """One attempt at one directory. -> (path, None) or (None, reason).
 
     The caller has already validated `action`; this is not a public entry
     point and does not re-check it.
+
+    `header` is called with `(path, fell_back)` for this attempt, so a header
+    that names the file's location names the directory actually being written
+    and does not have to work out which one that was.
+
+    The directory is created BEFORE the header is composed. Composing first
+    ran the header twice on the fallback route, which is the route every stock
+    Dispatcharr image takes on every action press, and the first result was
+    always discarded.
     """
     opener = opener or _default_opener
     tmp = None
     try:
         path = os.path.join(base_dir, f"{action}.txt")
-        data = body.encode("utf-8")
         os.makedirs(base_dir, exist_ok=True)
+        if header is None:
+            text = body
+        else:
+            # Labelled separately from every other failure here. A header that
+            # raises and a directory that refuses the write both leave the
+            # operator with no file, and they need different fixes: one is a
+            # code fault (the timezone lookup is the realistic one), the other
+            # is ownership or a full disk. Reporting both as a bare exception
+            # name loses that.
+            try:
+                text = header(path, fell_back) + body
+            except Exception as exc:
+                return None, "HeaderError/" + _reason(exc)
+        data = text.encode("utf-8")
         fd, tmp = opener(base_dir)
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)

@@ -9,8 +9,8 @@ notification channel, writing routing rules, sending a report as an
 attachment, quiet hours, hostname redaction, the on-screen banner over live
 video, and a troubleshooting ladder for a notification that did not arrive.
 
-**[Changelog](CHANGELOG.md)** lists what changed in each version, described in
-terms of what you will notice rather than which functions moved.
+**[Changelog](CHANGELOG.md)** lists what changed in each version, described by
+what you will notice rather than by which functions moved.
 
 ## If you are writing a plugin that sends notifications
 

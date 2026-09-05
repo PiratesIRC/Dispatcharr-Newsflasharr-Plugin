@@ -43,19 +43,26 @@ The rest of this document is written for someone reading logs and file paths, so
 All channel fields live in the plugin's settings screen. Any subset can be
 enabled; leaving a field blank disables that channel.
 
-<img src="screenshots/settings-channels.png" alt="The Settings tab showing the Start here guidance and the Discord, generic webhook and ntfy fields" width="700">
+<img src="screenshots/settings-channels.png" alt="The Settings tab showing the Start here guidance and the Discord, generic webhook, Connect and ntfy fields" width="700">
 
 Credential fields are masked once saved, which is why a filled Discord field
 shows as dots rather than the URL you pasted.
 
 - **Discord**: `discord_webhook_url`. Create a webhook on the target channel
-  (Discord: Channel Settings → Integrations → Webhooks → New Webhook → Copy
+  (Discord: Channel Settings -> Integrations -> Webhooks -> New Webhook -> Copy
   URL) and paste the URL in. It is a bearer credential, so the field is
   password-masked in the UI and is never echoed back in status/ledger output.
 - **Generic webhook**: `webhook_url`. Any endpoint that accepts a JSON POST
   body (`plugin`, `event`, `severity`, `kind`, `title`, `body`, `url`, `ts`).
   Useful for a home-grown receiver, Zapier/n8n/Home Assistant webhook
   triggers, etc.
+- **Dispatcharr Connect**: `connect_integration`. Type the exact name of a
+  webhook Integration you have already created on Dispatcharr's own Connect
+  page, and Newsflasharr reuses that row's URL and headers to deliver its
+  notifications. It reads only the address and headers it needs to
+  deliver, and it creates or edits nothing on that row. Read the full
+  explanation below the channel list before you rely on this channel; four of
+  its behaviors are easy to misread as bugs.
 - **ntfy**: `ntfy_server` (e.g. `https://ntfy.sh` or your own self-hosted
   instance), `ntfy_topic` (the topic name you subscribe to in the ntfy app),
   and optionally `ntfy_token` if the topic is access-controlled. Newsflasharr
@@ -65,7 +72,7 @@ shows as dots rather than the URL you pasted.
 - **Apprise**: `apprise_url`, pointed at an
   [apprise-api](https://github.com/caronc/apprise-api) container's
   `/notify/<key>` endpoint. This fans out to Apprise's ~110-service long tail
-  (Signal, Telegram, email, Pushover, …) without Newsflasharr needing to know
+  (Signal, Telegram, email, Pushover, ...) without Newsflasharr needing to know
   about any of them. Run `apprise-api` as its own small container, configure
   its `<key>`'s target services inside Apprise itself, then point
   `apprise_url` at `http://<apprise-api-host>:<port>/notify/<key>`.
@@ -102,6 +109,34 @@ shows as dots rather than the URL you pasted.
     your password on the wire in base64 on every single send.
   - **"Sent" is not "delivered."** See below.
 
+### The Connect channel reuses a Dispatcharr row it does not own
+
+The Connect channel does not hold its own URL. It looks up an Integration by
+name on Dispatcharr's own Connect page once per settings load, keeps that
+result for up to five minutes, and posts to whatever URL and headers that row
+carried when it was last looked up. Four things follow from that, and each one
+has already surfaced as a support question:
+
+- **The Integration must be of type webhook.** Dispatcharr also has a script
+  Integration type, which runs a local script instead of posting to a URL.
+  Newsflasharr never runs a script; if the name you typed matches a script
+  Integration, the channel reports it is not usable and nothing is sent.
+- **The name must match exactly**, and it is looked up against Dispatcharr's
+  live Connect page, not against anything Newsflasharr stores. Renaming that
+  row on the Connect page stops delivery. For up to five minutes afterward
+  the channel keeps using a cached copy of the old row and nothing looks
+  wrong; once that cache expires, the channel reports a red error until the
+  setting is corrected to match the new name.
+- **These deliveries never appear on the Connect page's own Logs tab.**
+  Dispatcharr can only log a delivery that belongs to one of its own system
+  events, and a Newsflasharr notification is not one of those events. Look in
+  `notifications.jsonl` for proof of delivery, not the Connect page.
+- **The URL comes from a database row that any Dispatcharr user with Connect
+  access can write**, not from anything Newsflasharr validates beyond checking
+  that it starts with `http` or `https` and that it carries no username or
+  password in the address itself. Treat the Connect page's own access control
+  as the control here; Newsflasharr adds none of its own.
+
 ### Email is the one channel where a green ledger entry can be a lie
 
 Every other channel fails loudly with an HTTP status code. SMTP does not: a
@@ -112,11 +147,11 @@ never saw.
 
 Confirm the first send by looking in the **inbox and the spam folder**. Do not
 treat the ledger as proof for this channel the way you reasonably can for
-Discord or ntfy.
+Discord, Connect or ntfy.
 
 One consequence worth planning around: a stalled mail server delays the
 collector tick, and that tick is the single leader thread for **every**
-channel. A hung SMTP server therefore slows Discord and ntfy too. The timeout
+channel. A hung SMTP server therefore slows Discord, Connect and ntfy too. The timeout
 is 5 s and a failed connect skips SMTP for the rest of that tick, which bounds
 it, but it is why email should not be your only channel for anything urgent.
 
@@ -125,7 +160,7 @@ it, but it is why email should not be your only channel for anything urgent.
 A plugin that produces a scheduled artefact (dustarr's HTML usage report,
 for example) can have Newsflasharr email it as a real attachment instead of
 just linking to it. This is **smtp-only**: there is no attachment concept on
-Discord, ntfy, webhook or Apprise.
+Discord, ntfy, webhook, Connect or Apprise.
 
 Caller side, pass both `url=` and `attachment=`:
 
@@ -293,7 +328,7 @@ getting everything (because the rule is not `exclusive`):
 [{"match": {"severity": "critical"}, "channels": ["ntfy"]}]
 ```
 
-Result: a `warning` event → Discord only. A `critical` event → Discord *and*
+Result: a `warning` event -> Discord only. A `critical` event -> Discord *and*
 ntfy.
 
 **Example 2: `exclusive` carves one source away from the defaults.**
@@ -319,9 +354,9 @@ specific rules above it:
  {"match": {}, "channels": ["discord"]}]
 ```
 
-Result: a critical sentinelarr event → Discord (from the catch-all) *and*
+Result: a critical sentinelarr event -> Discord (from the catch-all) *and*
 ntfy (from the specific rule) *and* whatever's in `default_channels` (none
-of these rules are exclusive). A non-critical or non-sentinelarr event →
+of these rules are exclusive). A non-critical or non-sentinelarr event ->
 Discord (catch-all) plus `default_channels`.
 
 An empty `routing_rules` list (`[]`, the default) routes everything to
@@ -368,11 +403,43 @@ event(s) it summarizes. Unless you have a routing rule matching
 `source: notifier`, digests land on `default_channels`, which may differ from
 where the original warning/info events would have gone.
 
+## Noise control
+
+Three separate limits sit between an incoming event and a delivery, and each
+one has its own setting for which severities are allowed to ignore it. None of
+the three is a per-channel setting; they all apply before routing.
+
+- **Repeat window (minutes)** (`dedup_window_min`, default 10). The same alert
+  arriving again inside this window is collapsed instead of sent, and one
+  summary goes out when the window closes. Set it to 0 and nothing is ever
+  collapsed.
+- **Critical repeat window (minutes)** (`dedup_window_critical_min`, blank by
+  default). The same idea for criticals only. Blank means use the window
+  above. **0 here means something, unlike blank**, and what it means is that a repeated
+  critical always comes through.
+- **Max sends per hour** (`max_sends_per_hour`, default 20). A ceiling on
+  deliveries in a rolling hour. Anything over it is held and released as a
+  summary rather than dropped.
+- **Hourly cap bypass** (`hourly_cap_bypass`, default `critical`). Which
+  severities ignore the cap. They do not count towards it either, so a storm
+  of criticals cannot use up the budget the other severities share. Set it to
+  `warning` and both warnings and criticals bypass; set it to `none` and
+  nothing does.
+- **Quiet hours bypass** (`quiet_hours_bypass`, default `critical`). Which
+  severities come through during a quiet-hours window instead of waiting for
+  it to end. Same three choices, and `none` really does mean nothing gets
+  through until the window closes.
+
+The two bypass settings are the ones worth reading twice, because their
+default is the behaviour most descriptions of this plugin assume. If you set
+either to `none`, a critical is held exactly like an info event, and that is
+the setting working rather than a fault.
+
 ## Quiet hours
 
 `quiet_hours` is off by default (empty string). Set it as `HH:MM-HH:MM` (e.g.
 `22:00-08:00`); it is evaluated as "is local-now inside this window" in
-**Dispatcharr's own configured timezone** (Settings → System), properly via
+**Dispatcharr's own configured timezone** (Settings -> System), properly via
 `zoneinfo`, so DST transitions are handled correctly, never as a raw epoch
 calculation.
 
@@ -383,7 +450,10 @@ the resolved zone, and warns if Dispatcharr's configured value is not a valid
 IANA name (Dispatcharr accepts any string there, and an invalid one would
 otherwise make quiet hours silently stop working).
 
-- **`critical` always bypasses quiet hours** and pages immediately.
+- **`critical` bypasses quiet hours and pages immediately, unless you have
+  changed it.** That is the default of the **Quiet hours bypass** setting
+  (`quiet_hours_bypass`), not a fixed rule: set it to `none` and criticals
+  are held with everything else until the window ends.
 - `warning`/`info` events are held during the window and flushed as a single
   digest at window end (along with any resolves for critical opens that were
   themselves delivered with a bypass. Those still fire immediately, not
@@ -399,7 +469,7 @@ Three layers scrub outbound text, and they are independent: a failure in one
 does not disable the others:
 
 1. **Client-side**, inside `notify_client.notify()` at spool-write time, before
-   truncation. This is the load-bearing one and it catches credential shapes.
+   truncation. This is the one that does the most work, and it catches credential shapes.
 2. **At rest**, in the `notifications.jsonl` ledger and the `failed/` sidecars.
 3. **At the wire**, immediately before the POST, on a copy of the event. This
    is the hostname layer described below.
@@ -413,7 +483,7 @@ appears only in the account name, while `server_url` points at a CDN edge.
 `redact_hostnames` is **additive on top of that**, not a replacement. Use it
 for anything Dispatcharr cannot know about:
 
-- your own webhook / ntfy / Apprise host
+- your own webhook / Connect / ntfy / Apprise host
 - a LAN IP that a caller plugin puts in a notification body (e.g. a report link)
 - a reverse proxy or DDNS name
 
@@ -538,7 +608,7 @@ button prints this as ONE line; it is wrapped here only so it can be read:
 guide stopped at the audio line. Without `-f mpegts pipe:1` the profile fails at
 stream start with an HTTP 500 and no useful message.
 
-Six parts of that are load-bearing:
+Six parts of that matter, and here is what breaks without each:
 
 - **The doubled backslashes before each comma are not a typo: type them
   exactly.** Dispatcharr builds the command as `[command] + shlex_split(parameters)`,
@@ -576,7 +646,7 @@ Six parts of that are load-bearing:
   large value.
 
 **You do not have to write this by hand.** Set the size, position, colours,
-opacity and picture quality under **🎨 Banner appearance** in the settings, then
+opacity and picture quality under **Banner appearance** in the settings, then
 click **Ticker filter**: it prints the complete parameters string to paste here.
 
 Those five settings sit under their own sub-header for a reason: they are the
@@ -669,7 +739,22 @@ Swap `h264_nvenc` for `libx264 -preset veryfast` if you have no GPU.
 parameter onto every stream line, so TiviMate needs nothing special, just the
 playlist URL. Devices on your normal playlist are unaffected and pay no cost.
 
-**3. Enable the ticker** in Newsflasharr and click Validate.
+**3. Enable the ticker** in Newsflasharr and click Validate. The switch is
+**Enable on-screen ticker** (`ticker_enabled`), off by default. Turning it on
+by itself draws nothing: the Output Profile from step 1 and a device
+subscribed to it in step 2 both have to exist first.
+
+The rest of the behaviour settings, all of which take effect on the next
+banner with no re-paste:
+
+- **Minimum severity** (`ticker_min_severity`) and **Only these sources may
+  draw** (`ticker_sources`) are the two gates described below.
+- **Banner duration (s)** (`ticker_ttl_s`) is how long a banner stays up.
+- **Banner prefix** (`ticker_prefix`) is optional text at the front of every
+  banner, so a shared screen can say whose alert it is: set it to `HOME` and a
+  banner reads `HOME CRITICAL: CNN is black`. Plain text only, trimmed to 24
+  characters. **Emoji draw as an empty box**, because the drawtext filter has
+  no glyph for them.
 
 **4. Route it.** `ticker` is a channel name like any other: add it to **Default
 channels** (e.g. `ntfy, ticker`) or name it in a routing rule. Nothing draws
@@ -770,7 +855,7 @@ gate stopped it.
 Four toggles cover the useful cases; no event names to memorize:
 
 - **Notify on blocked M3U/EPG requests**; a client request to your playlist
-  or guide endpoint was denied by network-access rules. Rare, actionable.
+  or guide endpoint was denied by network-access rules. Rare, and something you can fix.
   **Recommended.**
 - **Notify on failed logins**; read its warning first: failed logins are
   remotely triggerable by an unauthenticated party, and criticals bypass the
@@ -799,6 +884,43 @@ toggles, for anything those toggles do not cover:
 Validate's warnings follow the EFFECTIVE set; an event enabled by toggle
 gets the same lint (volume, sentinelarr overlap, the login_failed caution) as
 one typed into the list.
+
+## Advanced settings
+
+Four settings sit under Advanced. The defaults are right for almost every
+installation, and the first one is the only one worth changing casually.
+
+- **Queue check interval (s)** (`spool_poll_s`, default 5). How often
+  Newsflasharr looks for newly written events. Lowering it delivers sooner and
+  wakes the worker more often; raising it does the opposite. This is the delay
+  between an event being written and being picked up, so it is what to look at
+  if notifications feel slightly late rather than missing.
+- **Max event age (hours)** (`max_event_age_h`). An event older than this is
+  discarded rather than delivered, so a queue that backed up while a channel
+  was down does not page you about a fault that ended days ago.
+- **Expect a report every N days** (`report_expect_days`) and **Expect a
+  report from each of these** (`report_expect`) drive the report-absence
+  check described under Sending a report as an attachment.
+
+## The buttons
+
+Nine actions are declared. Eight are buttons you press; the ninth is not.
+
+| Button | What it does |
+| --- | --- |
+| **Validate settings** | Reads the settings on screen, lists the enabled channels, and reports anything that cannot work. Changes nothing. |
+| **Send test notification** | Sends a real notification. Leave the channel box blank and it goes through every enabled channel at once, which can page your phone and paint a banner over live video. Name one channel to test only that one. |
+| **Test on-screen ticker** | Draws a test banner now, ignoring the severity and source gates. |
+| **Ticker filter (copy into Output Profile)** | Prints the ffmpeg parameters built from your appearance settings, for you to paste into the Output Profile yourself. |
+| **Show redaction list** | Lists every hostname currently removed from outgoing messages, and refreshes that list from Dispatcharr. |
+| **Show routing** | Prints where each kind of notification actually goes, resolved per source. |
+| **Show status** | Heartbeat, queue depth, what is waiting, and the most recent deliveries, all read from disk. |
+| **Flush held notifications** | Force-delivers everything currently held, including anything waiting on quiet hours. It asks first, because at 3am this is a phone full of alerts arriving at once. It releases the hold and attempts delivery; it does not guarantee delivery, and the readout says how many of the held events were actually released. |
+| **(automatic)** | Not a button. This is the **Dispatcharr event hook**, which Dispatcharr calls when it emits one of its own system events. Clicking it does nothing. Use the **Notify on ...** switches to decide which of those events reach you. |
+
+Colour on these buttons means one thing each: blue reads and reports, cyan
+sends something outward, orange moves real traffic. Nothing here is red,
+because nothing here deletes anything.
 
 ## Every action writes its complete output to a file
 
@@ -874,14 +996,16 @@ When "I should have gotten a notification and did not," work down this list:
      window and a critical follows on the same key, the critical breaks the
      window and is delivered.
    - `hold`: captured for a later summary, because of the hourly send cap or
-     an active quiet-hours window. `critical` bypasses both of those, so it is
-     normally never held, **but if NO channel is enabled, everything is held
-     regardless of severity**, criticals included. When a batch is released,
+     an active quiet-hours window. With both bypass settings at their default
+     of `critical`, a critical bypasses both and is normally never held;
+     set **Hourly cap bypass** or **Quiet hours bypass** to `none` and it
+     is held like anything else. **And if NO channel is enabled, everything
+     is held regardless of severity**, criticals included. When a batch is released,
      the summary takes the severity of the worst thing in it and is delivered
      to the channels those events were bound for, so a held critical still
      routes as a critical.
    - `gave_up`: retried on a channel until the backoff schedule exhausted
-     (~30 s → 5 min → 30 min) and it is now ledgered as failed for that
+     (~30 s -> 5 min -> 30 min) and it is now ledgered as failed for that
      channel; check the channel's config (webhook URL, ntfy topic, etc).
    - `no_route`: no routing rule and no `default_channels` matched, so the
      event had nowhere to go. Almost always a `routing_rules`/
