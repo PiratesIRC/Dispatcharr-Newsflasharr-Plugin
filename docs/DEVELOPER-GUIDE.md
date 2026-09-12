@@ -153,7 +153,7 @@ means a green run there.
 2. Write the failing test first, and run it to confirm it fails for the reason
    you expect.
 3. Make the change and run the whole suite, not only your own test.
-4. Bump the version with `python bump_version.py`. Hot reloading keys on the
+4. Bump the version with `python scripts/bump_version.py`. Hot reloading keys on the
    manifest, so a change shipped without a version bump leaves the old code
    running in memory.
 5. Add a changelog entry describing the behaviour an operator will notice.

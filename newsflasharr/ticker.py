@@ -544,6 +544,23 @@ DEFAULT_ENCODE_QUALITY = "balanced"
 ENCODE_MAXRATE = "16M"
 ENCODE_BUFSIZE = "32M"
 
+# A KEYFRAME INTERVAL, IN FRAMES. This is a correctness setting, not a quality
+# one. Measured 2026-09-12, after the operator reported every channel black on
+# the device carrying the banner while Sentinelarr reported nothing wrong,
+# correctly, because its sensors read the INPUT side of the pipeline.
+#
+# With no explicit interval this encoder emitted exactly ONE SPS, ONE PPS and
+# ONE IDR keyframe in a 12 s live capture, against 9 of each on the untouched
+# passthrough over the same session and minute. A client that joins after that
+# single keyframe has left the output buffer never receives the parameter sets
+# its decoder needs to start, so it shows a black picture indefinitely while
+# audio and bytes keep arriving. The passthrough profiles are unaffected
+# because they copy the video and the source's own keyframes ride through.
+#
+# 60 frames is 1.0 s at 60 fps and 2.4 s at 25 fps, so the worst case is a
+# short tune-in wait rather than a black screen.
+ENCODE_GOP_FRAMES = 60
+
 
 def render_encoder(settings):
     """The video encoder arguments, quality targeted rather than bitrate capped.
@@ -563,7 +580,12 @@ def render_encoder(settings):
     cq = ENCODE_QUALITY.get(tier if isinstance(tier, str) else "",
                             ENCODE_QUALITY[DEFAULT_ENCODE_QUALITY])
     return (f"-c:v h264_nvenc -preset p5 -rc vbr -cq {cq} -b:v 0 "
-            f"-maxrate {ENCODE_MAXRATE} -bufsize {ENCODE_BUFSIZE}")
+            f"-maxrate {ENCODE_MAXRATE} -bufsize {ENCODE_BUFSIZE} "
+            # `-forced-idr 1` is REQUIRED alongside `-g`: nvenc defaults it to
+            # false, and a plain I-frame does not reset the decoder of a client
+            # that joined mid-stream. Only an IDR does, and every client here
+            # joins mid-stream.
+            f"-g {ENCODE_GOP_FRAMES} -forced-idr 1")
 
 
 def render_parameters(settings, font=DEFAULT_FONT,

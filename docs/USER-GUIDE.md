@@ -597,7 +597,7 @@ button prints this as ONE line; it is wrapped here only so it can be read:
 -i pipe:0
 -map 0:v:0 -map 0:a:0
 -filter:v drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=/data/newsflasharr/ticker.txt:reload=30:expansion=none:fontsize=h/30:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12:x=if(gt(text_w\\,w)\\,w-mod(t*150\\,w+text_w)\\,(w-text_w)/2):y=12+(h-text_h-24)*0.9
--c:v h264_nvenc -preset p5 -rc vbr -cq 21 -b:v 0 -maxrate 16M -bufsize 32M
+-c:v h264_nvenc -preset p5 -rc vbr -cq 21 -b:v 0 -maxrate 16M -bufsize 32M -g 60 -forced-idr 1
 -c:a aac -b:a 192k -ac 2
 -max_muxing_queue_size 4096 -flush_packets 1
 -mpegts_flags +pat_pmt_at_frames+resend_headers+initial_discontinuity

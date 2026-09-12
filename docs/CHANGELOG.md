@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.26.2551036 (2026-09-12)
+
+### Fixed
+
+- **The ticker output profile now forces a keyframe every 60 frames
+  (`-g 60 -forced-idr 1`), which fixes a black picture on every channel.**
+  The profile re-encodes with `h264_nvenc` and set no keyframe interval, so
+  the encoder emitted almost none. Measured on one channel, same session and
+  minute: the untouched passthrough carried 9 sequence parameter sets, 9
+  picture parameter sets and 9 keyframes in a 12 second capture, while this
+  profile carried exactly one of each, followed by 161 non-keyframe slices.
+  A viewer joining after that single keyframe had left the output buffer
+  never received the parameter sets a decoder needs to start, so the picture
+  stayed black indefinitely while audio and bytes kept arriving. The decoder
+  reported `Could not find codec parameters for stream 0 ... unspecified
+  size`, then `non-existing PPS 0 referenced` 638 times, and stopped at
+  `Decode error rate 0.914634 exceeds maximum 0.666667`.
+
+  `-forced-idr 1` is required alongside `-g`: `h264_nvenc` defaults it to
+  false, and a plain I-frame does not reset the decoder of a client that
+  joined mid-stream. Only the profiles that re-encode were affected; the
+  passthrough profiles copy the video, so the source's own keyframes ride
+  through and they never showed this.
+
+  60 frames is 1.0 second at 60 fps and 2.4 seconds at 25 fps, so the worst
+  case is a short wait at tune-in rather than a black screen. The reference
+  parameters block in the user guide was updated to match.
+
 ## 1.26.2481646 (September 5, 2026)
 
 **A seventh delivery channel, and a pass over everything the plugin says to
