@@ -59,6 +59,8 @@ DEFAULTS = {
     "ntfy_topic": "",
     "ntfy_token": "",
     "apprise_url": "",
+    "apprise_username": "",
+    "apprise_password": "",
     # SMTP. These MUST be here: both settings entry points seed from DEFAULTS,
     # so without them settings.get("smtp_security") is None on any path whose
     # stored row predates the fields.

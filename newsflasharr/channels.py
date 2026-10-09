@@ -17,6 +17,7 @@ Hard-won lessons baked in here:
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
@@ -367,12 +368,17 @@ _MIN_MASKED_HEADER_VALUE_LEN = 8
 # never be candidates for masking regardless of length.
 _OWN_HEADER_NAMES = frozenset({"content-type", "user-agent"})
 
+# Header values masked whatever their length. An Authorization value carries
+# a login, and the floor above would let a short one through unmasked.
+_ALWAYS_MASKED_HEADER_NAMES = frozenset({"authorization"})
+
 
 def _mask_request_header_values(text, request):
     """Replace any header VALUE carried by `request` that appears verbatim in
     `text`, with `<redacted>` -- except the channel's own `Content-Type` and
     `User-Agent` (see `_OWN_HEADER_NAMES`), and any value shorter than
-    `_MIN_MASKED_HEADER_VALUE_LEN`.
+    `_MIN_MASKED_HEADER_VALUE_LEN` unless the header is `Authorization`
+    (see `_ALWAYS_MASKED_HEADER_NAMES`).
 
     `_safe_reason` is gated on `"://"`, which never fires for a message such
     as `ValueError("Invalid header value b'Bearer S3CR3T'")` -- that text
@@ -388,7 +394,10 @@ def _mask_request_header_values(text, request):
             if name.lower() in _OWN_HEADER_NAMES:
                 continue
             value = str(value)
-            if len(value) < _MIN_MASKED_HEADER_VALUE_LEN:
+            if not value:
+                continue
+            if (len(value) < _MIN_MASKED_HEADER_VALUE_LEN
+                    and name.lower() not in _ALWAYS_MASKED_HEADER_NAMES):
                 continue
             if value in text:
                 text = text.replace(value, "<redacted>")
@@ -641,6 +650,10 @@ def unusable_channels(settings):
             out.append((name, f"{key} is not an http(s) URL; delivery will "
                               f"fail on every event until it starts with "
                               f"http:// or https://"))
+        elif name == "apprise":
+            problem = _apprise_login_problem(settings)
+            if problem:
+                out.append((name, problem))
     status = connect_status(settings)
     if status["state"] in ("broken", "unknown"):
         reason = status["reason"]
@@ -802,12 +815,45 @@ def _ntfy_request(event, settings, version):
                                    headers=_headers(version, extra))
 
 
+_APPRISE_LOGIN_UNPAIRED = ("apprise_username and apprise_password must both be "
+                           "set or both be blank")
+_APPRISE_LOGIN_COLON = ("apprise_username must not contain ':' (HTTP Basic "
+                        "cannot carry it)")
+
+
+def _apprise_login_problem(settings):
+    """The literal reason the Apprise login cannot be sent, or None. Names the
+    settings, never their values, because the reason reaches the failure detail."""
+    username = (settings.get("apprise_username") or "").strip()
+    password = settings.get("apprise_password") or ""
+    if bool(username) != bool(password):
+        return _APPRISE_LOGIN_UNPAIRED
+    if ":" in username:
+        return _APPRISE_LOGIN_COLON
+    return None
+
+
+def _apprise_basic_auth(settings):
+    """The Authorization value for the Apprise login, or None when the username
+    is blank. The password is not stripped. Call only after
+    _apprise_login_problem() has returned None."""
+    username = (settings.get("apprise_username") or "").strip()
+    if not username:
+        return None
+    password = settings.get("apprise_password") or ""
+    token = base64.b64encode(f"{username}:{password}".encode())
+    return "Basic " + token.decode("ascii")
+
+
 def _apprise_request(event, settings, version):
     target = (settings.get("apprise_url") or "").strip()
     if not target:
         return None
     if safe_url(target) is None:
         return _INVALID_TARGET
+    problem = _apprise_login_problem(settings)
+    if problem:
+        return _Unresolved(problem)
     body = event.get("body") or ""
     link = safe_url(event.get("url"))
     if link:
@@ -831,8 +877,10 @@ def _apprise_request(event, settings, version):
                "type": {"critical": "failure",
                         "warning": "warning"}.get(event.get("severity"), "info")}
     data = json.dumps(payload).encode("utf-8")
+    auth = _apprise_basic_auth(settings)
+    extra = {"Authorization": auth} if auth else None
     return urllib.request.Request(target, data=data, method="POST",
-                                   headers=_headers(version))
+                                   headers=_headers(version, extra))
 
 
 _BUILDERS = {"discord": _discord_request, "webhook": _webhook_request,

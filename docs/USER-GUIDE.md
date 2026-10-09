@@ -75,7 +75,10 @@ shows as dots rather than the URL you pasted.
   (Signal, Telegram, email, Pushover, ...) without Newsflasharr needing to know
   about any of them. Run `apprise-api` as its own small container, configure
   its `<key>`'s target services inside Apprise itself, then point
-  `apprise_url` at `http://<apprise-api-host>:<port>/notify/<key>`.
+  `apprise_url` at `http://<apprise-api-host>:<port>/notify/<key>`. If that
+  server requires a login, set `apprise_username` and `apprise_password` (sent
+  as HTTP Basic auth). Set both or neither, and the username cannot contain a
+  colon.
 - **Email (SMTP)**: `smtp_server`, `smtp_security`, `smtp_username`,
   `smtp_password`, `smtp_from`, `smtp_to`. Native and stdlib-only; **it does
   not replace Apprise**, which remains a perfectly good route to email if you

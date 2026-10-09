@@ -74,7 +74,7 @@ from . import (
 )
 from .notify_client import notify, redact
 
-PLUGIN_VERSION = "1.26.2551036"
+PLUGIN_VERSION = "1.26.2821932"
 
 # A delivery failure older than this is history, not an outage: reported as
 # a total, never as a problem. A bare cumulative counter would otherwise go
@@ -134,6 +134,14 @@ FIELDS = [
     {"id": "apprise_url", "label": "Apprise URL", "type": "string", "default": "",
      "input_type": "password",
      "description": "URL of an Apprise API endpoint. Leave blank to disable."},
+    {"id": "apprise_username", "label": "Apprise username", "type": "string",
+     "default": "",
+     "description": "Username for the Apprise API login (HTTP Basic), with no colon. "
+                    "Leave both login fields blank if the Apprise server has no login."},
+    {"id": "apprise_password", "label": "Apprise password", "type": "string",
+     "default": "", "input_type": "password",
+     "description": "Password for the Apprise API login (HTTP Basic). Leave both "
+                    "login fields blank if the Apprise server has no login."},
     {"id": "connect_integration", "label": "Dispatcharr Connect Integration",
      "type": "string", "default": "",
      "placeholder": "Name of a webhook Integration",

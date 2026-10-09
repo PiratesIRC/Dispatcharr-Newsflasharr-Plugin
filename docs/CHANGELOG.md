@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.26.2821932 (2026-10-09)
+
+### Added
+
+- **The Apprise channel can send a login.** Two new optional settings,
+  `apprise_username` and `apprise_password`, are sent as HTTP Basic auth to
+  the Apprise API, which version 2.0 can require on `/notify/<key>`. Leave
+  both blank for a server with no login; the request is then unchanged. If
+  only one is set, or the username contains a colon, nothing is sent and
+  Validate Settings names the two settings.
+
+### Changed
+
+- Authorization header values are now masked in failure text whatever their
+  length, on every channel.
+
 ## 1.26.2551036 (2026-09-12)
 
 ### Fixed
