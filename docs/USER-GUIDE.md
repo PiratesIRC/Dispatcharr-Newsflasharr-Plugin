@@ -888,6 +888,61 @@ Validate's warnings follow the EFFECTIVE set; an event enabled by toggle
 gets the same lint (volume, sentinelarr overlap, the login_failed caution) as
 one typed into the list.
 
+## Anonymous usage counts
+
+The Newsflashes Sent and Active Installs badges count every install that leaves
+the "Share anonymous usage counts" setting (on by default) ticked and has
+delivered at least one notification or had one of its actions run in the last
+30 days.
+
+Newsflashes Sent counts each notification Newsflasharr delivered, whichever channels it reached:
+Discord, a webhook, ntfy, Apprise, email, a Dispatcharr Connect
+Integration or the on-screen ticker. A notification sent to three channels counts
+once, and a digest counts once. A notification that is dropped, expires or fails does not
+count. A notification held by quiet hours or the hourly cap counts when it is finally
+delivered, whether the hold ends on its own or you press Flush held. A notification merged
+into a digest does not count by itself; the digest counts once. A test sent from Send test
+notification with the channel box left blank is a normal notification and counts once when delivered. A test
+sent to one named channel does not count, and neither does a test banner from the Test
+on-screen ticker button, because neither is written to the delivery ledger. The count is read from the delivery ledger, which keeps the current file and one previous file of about 10 MB each; deliveries older than that are not counted, and the badge does not go down.
+
+When a notification is delivered, or an action finishes, the plugin sends this
+install's Newsflashes Sent total and a random id for this plugin on this install
+to the plugin author's counter at plugin-stats.dpas.workers.dev. It sends at most
+once an hour after a successful send, or ten minutes after the last successful
+send when a notification has just been delivered. There is no timer: a notification that
+falls inside the gap sends nothing, and the next delivery or action that finds the
+gap passed sends the total. On a quiet install the badge can therefore trail the
+real count until the next notification or action.
+
+The server stores that id with the total and the date of the last report, and
+keeps them until this install unticks the setting and the delete succeeds, or
+until the plugin author removes them by hand. An install that stops reporting
+still counts toward Newsflashes Sent. The connection shows the server your public
+IP address; the server uses it only to limit abuse and does not store it in its
+database, though when an install first registers it keeps a salted one-way hash
+of it (of its /64 block for IPv6) for up to three days. Cloudflare, which hosts
+the server, keeps its own request logs. No names, channels, providers, messages
+or settings are sent. The figures are self-reported by installs and capped by the
+server, not verified.
+
+What counts as an active install: an install that sent at least one report in
+the last 30 UTC days. A badge changes after the server's hourly recount, which
+runs at the start of each UTC hour, and Shields may cache the badge for up to an
+hour more, so a new report can take up to about two hours to show.
+
+The setting is the last one in the settings form, in its own section. Unticking
+it takes effect when the next delivery or action finishes; the plugin then asks
+the server to delete this install's figures. Once the server confirms the delete,
+the plugin forgets its id, and ticking the setting again later starts a new one;
+if the delete could not reach the server, the plugin keeps the id and retries.
+The plugin keeps that id and the timing of its reports in
+/data/plugin_stats/newsflasharr/ (install_id, sent, backoff, disabled,
+delete_backoff, lock). To start a new id, untick the setting and let the next delivery or
+action finish so the delete succeeds; deleting that folder while the setting is
+ticked leaves the old figures on the server, and the new id then sends the full
+total again, so the badge counts those notifications twice.
+
 ## Advanced settings
 
 Four settings sit under Advanced. The defaults are right for almost every

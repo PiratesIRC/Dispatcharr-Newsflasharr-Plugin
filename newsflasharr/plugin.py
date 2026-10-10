@@ -71,10 +71,11 @@ from . import (
     spool,
     store,
     ticker,
+    usage,
 )
 from .notify_client import notify, redact
 
-PLUGIN_VERSION = "1.26.2821932"
+PLUGIN_VERSION = "1.26.2832058"
 
 # A delivery failure older than this is history, not an outage: reported as
 # a total, never as a problem. A bare cumulative counter would otherwise go
@@ -423,6 +424,8 @@ FIELDS = [
      "description": "One entry per scheduled report, as source/event=days. "
                     "Omit =days to use the cadence above. Blank = watch only "
                     "the total, which cannot tell which caller went quiet."},
+    {"id": "_section_usage", "type": "info", "label": "📊 Anonymous usage counts",
+     "description": "Sends the Newsflashes Sent total and a random install id to the plugin author's counter, so the README badges can count installs. No names, channels or settings are sent. Untick to stop."},
 ]
 
 ACTIONS = [
@@ -665,7 +668,7 @@ class Plugin:
                    "Apprise, email, a Dispatcharr Connect Integration, or an "
                    "on-screen banner over live TV, with deduplication, storm "
                    "throttling, quiet hours and per-channel retry.")
-    fields = FIELDS
+    fields = usage.fields_with_usage(FIELDS)
     actions = ACTIONS
 
     def __init__(self):
@@ -759,6 +762,22 @@ class Plugin:
         return out
 
     def run(self, action, params=None, context=None):
+        try:
+            return self._run_body(action, params, context)
+        finally:
+            self._report_action(action, context)
+
+    def _report_action(self, action, context):
+        """Unforced report after a user action. Never raises: it runs in a finally."""
+        try:
+            if action == "on_dispatcharr_event" or not hasattr(self, f"_action_{action}"):
+                return
+            settings = (context or {}).get("settings") or None
+            usage.report(settings)
+        except Exception:
+            pass
+
+    def _run_body(self, action, params=None, context=None):
         params = params if isinstance(params, dict) else {}
         raw_settings = (context or {}).get("settings") or {}
 
@@ -3091,6 +3110,8 @@ class Plugin:
                                        mods, opener=opener, wire_redact=wire_redact,
                                        smtp_factory=smtp_factory)
         stats = deliverer.tick(int(now * 1000))
+        if stats.get("delivered"):
+            usage.report(None, force=True)
 
         after_state = st.load_state(now)
         held_after = len((after_state.get("gates") or {}).get("held") or [])

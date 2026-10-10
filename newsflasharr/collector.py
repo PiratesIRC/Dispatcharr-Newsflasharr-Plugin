@@ -333,6 +333,23 @@ def _dispatcharr_mod():
         return None
 
 
+def _usage_mod():
+    """The sibling usage module, or None when standalone-loaded (same contract as _dispatcharr_mod)."""
+    try:
+        from . import usage
+        return usage
+    except Exception:
+        return None
+
+
+def _report_delivered(stats, logger=None):
+    """Forced report after a tick that wrote at least one delivered line. Called after
+    deliverer.tick returns, so every ledger line of that tick is already closed."""
+    usage = _usage_mod()
+    if usage is not None and (stats or {}).get("delivered"):
+        usage.report(None, force=True, logger=logger)
+
+
 def _routing_mod():
     """Lazy sibling import, same contract as `_dispatcharr_mod` above: this
     module must stay importable with no package context (conftest.load_mod),
@@ -670,7 +687,11 @@ class Collector:
             self.store, settings, self.version, lambda: now, self.mods,
             opener=self.opener, wire_redact=wire_redact,
             smtp_factory=self.smtp_factory, ticker=ticker)
-        stats = deliverer.tick(now_ms)
+        stats = {}
+        try:
+            stats = deliverer.tick(now_ms)
+        finally:
+            _report_delivered(stats)
         # Captured HERE, immediately after the Deliverer loaded state.json, and
         # read by the arming block further down. Two things would otherwise
         # erase it: `gates.Gates` pops `_corrupt_recovered` out of the state

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.26.2832058 (2026-10-10)
+
+### Added
+
+- Anonymous usage counts: a new setting, Share anonymous usage counts, on by default, sends this plugin's Newsflashes Sent total (notifications delivered) and a random install id to the plugin author's counter at plugin-stats.dpas.workers.dev, at most once an hour after a successful send, or ten minutes after the last successful send when a notification has just been delivered. Untick it to stop; this install's figures are then deleted from the server. Details: README, Anonymous usage counts.
+
+### Changed
+
+- The README and user guide now name this one HTTPS request and the /data/plugin_stats/newsflasharr/ folder; they previously said the plugin's only outbound connections were your notification destinations.
+
 ## 1.26.2821932 (2026-10-09)
 
 ### Added
